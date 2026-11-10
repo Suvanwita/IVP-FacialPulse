@@ -48,6 +48,10 @@ wheels/
 .coverage
 htmlcov/
 
+# Runtime Stored Data
+backend/data/*.json
+!backend/data/.gitkeep
+
 # Environment & Secrets
 .env
 .env.local

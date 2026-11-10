@@ -120,6 +120,34 @@ interface PHQ8Assessment {
   };
 }
 
+interface LongitudinalRecord {
+  session_id: string;
+  subject_id: string;
+  timestamp: number;
+  datetime_utc: string;
+  phq8_score: number;
+  phq8_score_continuous: number;
+  severity_tier: string;
+  clinical_threshold_met: boolean;
+  delta_from_previous: number;
+  delta_from_baseline: number;
+  trajectory_status: string;
+  symptom_domains?: Record<string, number>;
+  multimodal_concordance?: number | null;
+  acoustic_breakdown?: {
+    monotone_prosody_index?: number;
+    pause_retardation_index?: number;
+    vocal_strain_index?: number;
+    energy_flatness_index?: number;
+    f0_mean_hz?: number;
+    f0_std_hz?: number;
+    pause_ratio?: number;
+    avg_pause_duration_ms?: number;
+    speech_pause_ratio?: number;
+    duration_sec?: number;
+  };
+}
+
 interface ProtocolReport {
   session_id: string;
   composite_score: number;
@@ -130,6 +158,7 @@ interface ProtocolReport {
   clinical_findings: string[];
   multimodal?: MultimodalFusionReport;
   phq8_assessment?: PHQ8Assessment;
+  longitudinal_trajectory?: LongitudinalRecord;
   subscores: {
     anhedonia_score: number;
     cognitive_burden_score: number;
@@ -254,6 +283,69 @@ export default function Home() {
   const [voiceDetected, setVoiceDetected] = useState(false);
   const [freqBins, setFreqBins] = useState<number[]>(new Array(16).fill(0));
 
+  // Phase 5: Privacy, Security & Longitudinal Tracking State
+  const [showPrivacyModal, setShowPrivacyModal] = useState(false);
+  const [showLongitudinalModal, setShowLongitudinalModal] = useState(false);
+  const [longitudinalHistory, setLongitudinalHistory] = useState<LongitudinalRecord[]>([]);
+  const [purgeConfirmOpen, setPurgeConfirmOpen] = useState(false);
+  const [purgeMessage, setPurgeMessage] = useState<string | null>(null);
+  const [isPurging, setIsPurging] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+
+  const fetchLongitudinalHistory = useCallback(async () => {
+    try {
+      const res = await fetch('http://localhost:8000/longitudinal/history');
+      const data = await res.json();
+      if (data.success && Array.isArray(data.history)) {
+        setLongitudinalHistory(data.history);
+      }
+    } catch (err) {
+      console.error('Error loading longitudinal history:', err);
+    }
+  }, []);
+
+  const purgeAllData = useCallback(async () => {
+    setIsPurging(true);
+    try {
+      const res = await fetch('http://localhost:8000/longitudinal/purge', { method: 'DELETE' });
+      const data = await res.json();
+      if (data.success) {
+        setLongitudinalHistory([]);
+        setPurgeMessage(`GDPR Right to be Forgotten: Successfully purged ${data.purged_count} records.`);
+        setPurgeConfirmOpen(false);
+        setTimeout(() => setPurgeMessage(null), 6000);
+      }
+    } catch (err) {
+      console.error('Error purging data:', err);
+    } finally {
+      setIsPurging(false);
+    }
+  }, []);
+
+  const exportHistoryJson = useCallback(async () => {
+    setIsExporting(true);
+    try {
+      const res = await fetch('http://localhost:8000/longitudinal/export');
+      const data = await res.json();
+      if (data.success) {
+        const jsonStr = JSON.stringify(data.export, null, 2);
+        const blob = new Blob([jsonStr], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `FacialPulse_Deidentified_Record_${new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      }
+    } catch (err) {
+      console.error('Error exporting data:', err);
+    } finally {
+      setIsExporting(false);
+    }
+  }, []);
+
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const audioChunksRef = useRef<Float32Array[]>([]);
@@ -298,7 +390,10 @@ export default function Home() {
         }
       })
       .catch(() => {});
-  }, []);
+
+    // Phase 5: Fetch de-identified longitudinal screening history
+    fetchLongitudinalHistory();
+  }, [fetchLongitudinalHistory]);
 
   // Auto capture interval for standard continuous monitor
   useEffect(() => {
@@ -370,6 +465,7 @@ export default function Home() {
               if (repData.success) {
                 setProtocolReportData(repData.report);
                 setIsBaselineCalibrated(true);
+                fetchLongitudinalHistory();
               }
               setProtocolActive(false);
             }
@@ -669,12 +765,13 @@ export default function Home() {
   const temporal = result?.data?.temporal_analysis;
 
   return (
-    <div style={{
-      minHeight: '100vh',
-      background: 'linear-gradient(180deg, #F5F7FA 0%, #E8EEF5 100%)',
-      padding: '24px 36px',
-      fontFamily: '"Inter", system-ui, -apple-system, sans-serif'
-    }}>
+    <>
+      <div className="no-print" style={{
+        minHeight: '100vh',
+        background: 'linear-gradient(180deg, #F5F7FA 0%, #E8EEF5 100%)',
+        padding: '24px 36px',
+        fontFamily: '"Inter", system-ui, -apple-system, sans-serif'
+      }}>
       {/* Header Bar */}
       <div style={{
         background: `linear-gradient(135deg, ${colors.primary} 0%, ${colors.primaryDark} 100%)`,
@@ -701,6 +798,69 @@ export default function Home() {
             </p>
           </div>
         </div>
+
+        {/* Phase 5: Privacy & Longitudinal Navigation Pills */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <button
+            onClick={() => setShowPrivacyModal(true)}
+            style={{
+              padding: '8px 14px',
+              borderRadius: '20px',
+              background: 'rgba(255, 255, 255, 0.15)',
+              border: '1px solid rgba(255, 255, 255, 0.3)',
+              color: 'white',
+              fontSize: '0.82rem',
+              fontWeight: '600',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+            }}
+            title="HIPAA & GDPR Data Governance Controls"
+          >
+            <span>🛡️</span>
+            <span>HIPAA / GDPR Compliant</span>
+            <span style={{ fontSize: '0.7rem', padding: '1px 6px', borderRadius: '8px', background: '#2E7D32', color: 'white', fontWeight: '700' }}>
+              Zero Raw Media
+            </span>
+          </button>
+
+          <button
+            onClick={() => {
+              fetchLongitudinalHistory();
+              setShowLongitudinalModal(true);
+            }}
+            style={{
+              padding: '8px 14px',
+              borderRadius: '20px',
+              background: 'rgba(255, 255, 255, 0.15)',
+              border: '1px solid rgba(255, 255, 255, 0.3)',
+              color: 'white',
+              fontSize: '0.82rem',
+              fontWeight: '600',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+            }}
+            title="View Patient Longitudinal Affect Trajectory"
+          >
+            <span>📈</span>
+            <span>Longitudinal History</span>
+            <span style={{
+              fontSize: '0.72rem',
+              padding: '2px 7px',
+              borderRadius: '10px',
+              background: longitudinalHistory.length > 0 ? '#4CAF50' : 'rgba(255,255,255,0.25)',
+              color: 'white',
+              fontWeight: '700'
+            }}>
+              {longitudinalHistory.length}
+            </span>
+          </button>
+        </div>
         <div style={{ textAlign: 'right', color: 'white' }}>
           <div style={{ fontSize: '1.8rem', fontWeight: '300' }}>
             {time.hours}:{time.minutes}<span style={{ fontSize: '1rem', opacity: 0.8 }}>:{time.seconds}</span>
@@ -708,6 +868,33 @@ export default function Home() {
           <div style={{ fontSize: '0.8rem', opacity: 0.8 }}>{formatDate(currentTime)}</div>
         </div>
       </div>
+
+      {/* Phase 5: Privacy Notification Banner */}
+      {purgeMessage && (
+        <div style={{
+          maxWidth: '1500px',
+          margin: '0 auto 16px',
+          background: '#E8F5E9',
+          color: '#2E7D32',
+          border: '1px solid #A5D6A7',
+          padding: '12px 20px',
+          borderRadius: '12px',
+          fontSize: '0.88rem',
+          fontWeight: '600',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          boxShadow: '0 2px 8px rgba(46, 125, 50, 0.1)'
+        }}>
+          <span>✓ {purgeMessage}</span>
+          <button
+            onClick={() => setPurgeMessage(null)}
+            style={{ background: 'none', border: 'none', color: '#2E7D32', cursor: 'pointer', fontWeight: '700', fontSize: '1rem' }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* Control Banner & Guided Protocol Trigger */}
       <div style={{
@@ -1457,6 +1644,96 @@ export default function Home() {
             </div>
           )}
 
+          {/* Phase 5: Longitudinal Trajectory Comparison */}
+          {protocolReportData.longitudinal_trajectory && (
+            <div style={{
+              background: '#F0F7FF',
+              borderRadius: '12px',
+              padding: '16px 20px',
+              marginBottom: '20px',
+              border: '1.5px solid #BBDEFB'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap', gap: '10px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '1.1rem' }}>📈</span>
+                  <h4 style={{ margin: 0, fontSize: '0.95rem', color: colors.primaryDark, fontWeight: '700' }}>
+                    Longitudinal Trajectory &amp; Session-over-Session Tracking
+                  </h4>
+                  <span style={{
+                    fontSize: '0.72rem',
+                    background: '#E3F2FD',
+                    color: colors.primary,
+                    padding: '3px 8px',
+                    borderRadius: '6px',
+                    fontWeight: '600'
+                  }}>
+                    {protocolReportData.longitudinal_trajectory.subject_id}
+                  </span>
+                </div>
+                <span style={{
+                  fontSize: '0.78rem',
+                  fontWeight: '700',
+                  padding: '4px 10px',
+                  borderRadius: '12px',
+                  background: protocolReportData.longitudinal_trajectory.delta_from_previous <= -5 ? '#E8F5E9' :
+                              protocolReportData.longitudinal_trajectory.delta_from_previous >= 5 ? '#FFEBEE' :
+                              protocolReportData.longitudinal_trajectory.delta_from_previous <= -2 ? '#E0F2F1' :
+                              protocolReportData.longitudinal_trajectory.delta_from_previous >= 2 ? '#FFF3E0' : '#E3F2FD',
+                  color: protocolReportData.longitudinal_trajectory.delta_from_previous <= -5 ? colors.success :
+                         protocolReportData.longitudinal_trajectory.delta_from_previous >= 5 ? colors.accent :
+                         protocolReportData.longitudinal_trajectory.delta_from_previous <= -2 ? '#00796B' :
+                         protocolReportData.longitudinal_trajectory.delta_from_previous >= 2 ? colors.warning : colors.primary
+                }}>
+                  {protocolReportData.longitudinal_trajectory.trajectory_status}
+                </span>
+              </div>
+
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                gap: '12px',
+                marginTop: '10px'
+              }}>
+                <div style={{ background: 'white', padding: '12px', borderRadius: '8px', border: '1px solid #E3F2FD' }}>
+                  <div style={{ fontSize: '0.75rem', color: colors.textLight }}>Δ vs Previous Session</div>
+                  <div style={{
+                    fontSize: '1.4rem',
+                    fontWeight: '800',
+                    color: protocolReportData.longitudinal_trajectory.delta_from_previous <= -5 ? colors.success :
+                           protocolReportData.longitudinal_trajectory.delta_from_previous >= 5 ? colors.accent : colors.text
+                  }}>
+                    {protocolReportData.longitudinal_trajectory.delta_from_previous > 0 ? `+${protocolReportData.longitudinal_trajectory.delta_from_previous}` : protocolReportData.longitudinal_trajectory.delta_from_previous} pts
+                  </div>
+                  <div style={{ fontSize: '0.72rem', color: '#78909C' }}>
+                    {protocolReportData.longitudinal_trajectory.delta_from_previous <= -5 ? 'Clinically Significant Improvement' :
+                     protocolReportData.longitudinal_trajectory.delta_from_previous >= 5 ? 'Clinically Significant Deterioration' : 'Stable Trajectory'}
+                  </div>
+                </div>
+
+                <div style={{ background: 'white', padding: '12px', borderRadius: '8px', border: '1px solid #E3F2FD' }}>
+                  <div style={{ fontSize: '0.75rem', color: colors.textLight }}>Δ vs Initial Baseline</div>
+                  <div style={{
+                    fontSize: '1.4rem',
+                    fontWeight: '800',
+                    color: protocolReportData.longitudinal_trajectory.delta_from_baseline <= -5 ? colors.success :
+                           protocolReportData.longitudinal_trajectory.delta_from_baseline >= 5 ? colors.accent : colors.text
+                  }}>
+                    {protocolReportData.longitudinal_trajectory.delta_from_baseline > 0 ? `+${protocolReportData.longitudinal_trajectory.delta_from_baseline}` : protocolReportData.longitudinal_trajectory.delta_from_baseline} pts
+                  </div>
+                  <div style={{ fontSize: '0.72rem', color: '#78909C' }}>Cumulative shift across all sessions</div>
+                </div>
+
+                <div style={{ background: 'white', padding: '12px', borderRadius: '8px', border: '1px solid #E3F2FD' }}>
+                  <div style={{ fontSize: '0.75rem', color: colors.textLight }}>Clinical Criteria (DSM-5 / APA)</div>
+                  <div style={{ fontSize: '0.85rem', fontWeight: '700', color: colors.text, marginTop: '4px' }}>
+                    ±5 Points Cutoff
+                  </div>
+                  <div style={{ fontSize: '0.72rem', color: '#78909C' }}>Accepted threshold for meaningful response</div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Clinical Findings Summary */}
           <div style={{ background: '#F8F9FA', padding: '16px 20px', borderRadius: '12px', marginBottom: '24px' }}>
             <h4 style={{ margin: '0 0 8px', fontSize: '0.9rem', color: colors.text, fontWeight: '700' }}>
@@ -1487,11 +1764,30 @@ export default function Home() {
           )}
 
           {/* Action buttons */}
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', flexWrap: 'wrap' }}>
             <button
-              onClick={() => window.print()}
+              onClick={() => {
+                fetchLongitudinalHistory();
+                setShowLongitudinalModal(true);
+              }}
               style={{
-                padding: '10px 18px',
+                padding: '10px 16px',
+                background: '#E3F2FD',
+                color: colors.primary,
+                border: `1px solid ${colors.primary}`,
+                borderRadius: '8px',
+                fontSize: '0.85rem',
+                fontWeight: '600',
+                cursor: 'pointer'
+              }}
+            >
+              📈 View Longitudinal History
+            </button>
+            <button
+              onClick={exportHistoryJson}
+              disabled={isExporting}
+              style={{
+                padding: '10px 16px',
                 background: '#ECEFF1',
                 color: colors.text,
                 border: 'none',
@@ -1501,14 +1797,29 @@ export default function Home() {
                 cursor: 'pointer'
               }}
             >
-              🖨️ Print Clinical Summary
+              {isExporting ? 'Exporting...' : '📥 Export De-Identified Record (JSON)'}
+            </button>
+            <button
+              onClick={() => window.print()}
+              style={{
+                padding: '10px 18px',
+                background: `linear-gradient(135deg, ${colors.primary} 0%, ${colors.primaryDark} 100%)`,
+                color: 'white',
+                border: 'none',
+                borderRadius: '8px',
+                fontSize: '0.85rem',
+                fontWeight: '600',
+                cursor: 'pointer'
+              }}
+            >
+              🖨️ Print Clinical EHR Summary
             </button>
             <button
               onClick={() => setProtocolReportData(null)}
               style={{
                 padding: '10px 20px',
-                background: colors.primary,
-                color: 'white',
+                background: '#CFD8DC',
+                color: '#263238',
                 border: 'none',
                 borderRadius: '8px',
                 fontSize: '0.85rem',
@@ -2020,6 +2331,41 @@ export default function Home() {
         </div>
       </div>
 
+      {/* Phase 5: Privacy & Security Governance Modal */}
+      {showPrivacyModal && (
+        <PrivacyGovernanceModal
+          isOpen={showPrivacyModal}
+          onClose={() => {
+            setShowPrivacyModal(false);
+            setPurgeConfirmOpen(false);
+          }}
+          onExport={exportHistoryJson}
+          onPurge={purgeAllData}
+          isExporting={isExporting}
+          isPurging={isPurging}
+          purgeConfirmOpen={purgeConfirmOpen}
+          setPurgeConfirmOpen={setPurgeConfirmOpen}
+          colors={colors}
+        />
+      )}
+
+      {/* Phase 5: Longitudinal History Modal */}
+      {showLongitudinalModal && (
+        <LongitudinalHistoryModal
+          isOpen={showLongitudinalModal}
+          onClose={() => setShowLongitudinalModal(false)}
+          history={longitudinalHistory}
+          onExport={exportHistoryJson}
+          onPurgeClick={() => {
+            setShowLongitudinalModal(false);
+            setShowPrivacyModal(true);
+            setPurgeConfirmOpen(true);
+          }}
+          onPrint={() => window.print()}
+          colors={colors}
+        />
+      )}
+
       <style jsx global>{`
         @keyframes pulse {
           0%, 100% { opacity: 1; }
@@ -2036,8 +2382,40 @@ export default function Home() {
           background: #c1c1c1;
           border-radius: 3px;
         }
+        @media print {
+          @page {
+            size: A4 portrait;
+            margin: 10mm 12mm 10mm 12mm;
+          }
+          body {
+            background: white !important;
+            color: #000000 !important;
+            font-size: 10pt !important;
+          }
+          .no-print {
+            display: none !important;
+          }
+          .print-only {
+            display: block !important;
+          }
+        }
+        @media screen {
+          .print-only {
+            display: none !important;
+          }
+        }
       `}</style>
     </div>
+
+    {/* Phase 5: Dedicated Printable Clinical EHR / EMR Document (Visible only when printing) */}
+    <div className="print-only">
+      <PrintableClinicalEhr
+        report={protocolReportData}
+        history={longitudinalHistory}
+        colors={colors}
+      />
+    </div>
+  </>
   );
 }
 
@@ -2269,6 +2647,900 @@ function PHQ8ItemCard({ item, colors }: { item: PHQ8Item; colors: any }) {
         borderRadius: '6px'
       }}>
         {item.biomarkers}
+      </div>
+    </div>
+  );
+}
+
+// Phase 5: Longitudinal Trajectory SVG Chart (Session-over-Session PHQ-8)
+function LongitudinalTrajectoryChart({ history }: { history: LongitudinalRecord[] }) {
+  const width = 740;
+  const height = 220;
+  const padLeft = 45;
+  const padRight = 35;
+  const padTop = 25;
+  const padBottom = 35;
+
+  if (!history || history.length === 0) {
+    return (
+      <div style={{
+        height: '140px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: '#F8FAFC',
+        borderRadius: '10px',
+        border: '1px dashed #CFD8DC',
+        color: '#607D8B',
+        fontSize: '0.85rem'
+      }}>
+        No screening sessions recorded yet. Complete 4-phase screenings to establish baseline trajectory.
+      </div>
+    );
+  }
+
+  const n = history.length;
+  const getX = (idx: number) => {
+    if (n === 1) return (width - padLeft - padRight) / 2 + padLeft;
+    return padLeft + (idx / (n - 1)) * (width - padLeft - padRight);
+  };
+  const getY = (score: number) => {
+    const clamped = Math.max(0, Math.min(24, score));
+    return padTop + ((24 - clamped) / 24) * (height - padTop - padBottom);
+  };
+
+  const getScoreColor = (s: number) => {
+    if (s >= 15) return '#E31937';
+    if (s >= 10) return '#F57C00';
+    if (s >= 5) return '#FBC02D';
+    return '#2E7D32';
+  };
+
+  const linePath = n > 1
+    ? history.map((rec, i) => `${i === 0 ? 'M' : 'L'} ${getX(i).toFixed(1)} ${getY(rec.phq8_score_continuous || rec.phq8_score).toFixed(1)}`).join(' ')
+    : '';
+
+  return (
+    <div style={{ width: '100%', overflowX: 'auto' }}>
+      <svg viewBox={`0 0 ${width} ${height}`} style={{ width: '100%', height: `${height}px`, background: '#FFFFFF', borderRadius: '10px', border: '1px solid #E2E8F0' }}>
+        {/* Severity Background Bands */}
+        <rect x={padLeft} y={getY(24)} width={width - padLeft - padRight} height={getY(20) - getY(24)} fill="#FFEBEE" opacity="0.3" />
+        <rect x={padLeft} y={getY(20)} width={width - padLeft - padRight} height={getY(15) - getY(20)} fill="#FFF3E0" opacity="0.3" />
+        <rect x={padLeft} y={getY(15)} width={width - padLeft - padRight} height={getY(10) - getY(15)} fill="#FFFDE7" opacity="0.35" />
+        <rect x={padLeft} y={getY(10)} width={width - padLeft - padRight} height={getY(5) - getY(10)} fill="#F1F8E9" opacity="0.4" />
+        <rect x={padLeft} y={getY(5)} width={width - padLeft - padRight} height={getY(0) - getY(5)} fill="#E8F5E9" opacity="0.45" />
+
+        {/* DSM-5 Clinical Cutoff Line (PHQ-8 = 10) */}
+        <line
+          x1={padLeft}
+          y1={getY(10)}
+          x2={width - padRight}
+          y2={getY(10)}
+          stroke="#E53935"
+          strokeWidth="1.8"
+          strokeDasharray="5 3"
+        />
+        <text x={width - padRight - 5} y={getY(10) - 6} fontSize="9" fill="#E53935" textAnchor="end" fontWeight="700">
+          DSM-5 Clinical Cutoff (≥10)
+        </text>
+
+        {/* Y-Axis Gridlines & Labels */}
+        {[0, 5, 10, 15, 20, 24].map((tick) => (
+          <g key={tick}>
+            <line x1={padLeft} y1={getY(tick)} x2={width - padRight} y2={getY(tick)} stroke="#ECEFF1" strokeWidth="1" />
+            <text x={padLeft - 8} y={getY(tick) + 3.5} fontSize="9" fill="#78909C" textAnchor="end" fontWeight="500">
+              {tick}
+            </text>
+          </g>
+        ))}
+
+        {/* Data Line */}
+        {n > 1 && (
+          <path d={linePath} fill="none" stroke="#1565C0" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
+        )}
+
+        {/* Data Nodes */}
+        {history.map((rec, i) => {
+          const cx = getX(i);
+          const cy = getY(rec.phq8_score_continuous || rec.phq8_score);
+          const col = getScoreColor(rec.phq8_score);
+          const dateLabel = rec.datetime_utc ? rec.datetime_utc.split(' ')[0] : `Sess ${i + 1}`;
+
+          return (
+            <g key={rec.session_id || i}>
+              <circle cx={cx} cy={cy} r="7" fill={col} opacity="0.25" />
+              <circle cx={cx} cy={cy} r="4.5" fill="white" stroke={col} strokeWidth="2.5" />
+
+              <rect x={cx - 18} y={cy - 22} width="36" height="15" rx="4" fill={col} />
+              <text x={cx} y={cy - 11} fontSize="9" fill="white" textAnchor="middle" fontWeight="700">
+                {rec.phq8_score}
+              </text>
+
+              {i > 0 && rec.delta_from_previous !== undefined && (
+                <text
+                  x={cx}
+                  y={cy + 17}
+                  fontSize="8.5"
+                  fill={rec.delta_from_previous <= -5 ? '#2E7D32' : rec.delta_from_previous >= 5 ? '#C62828' : '#455A64'}
+                  textAnchor="middle"
+                  fontWeight="700"
+                >
+                  {rec.delta_from_previous > 0 ? `+${rec.delta_from_previous}` : rec.delta_from_previous}
+                </text>
+              )}
+
+              <text x={cx} y={height - 10} fontSize="8" fill="#546E7A" textAnchor="middle" fontWeight="500">
+                {dateLabel}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+// Phase 5: Privacy, Security & Data Governance Modal
+function PrivacyGovernanceModal({
+  isOpen,
+  onClose,
+  onExport,
+  onPurge,
+  isExporting,
+  isPurging,
+  purgeConfirmOpen,
+  setPurgeConfirmOpen,
+  colors
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onExport: () => void;
+  onPurge: () => void;
+  isExporting: boolean;
+  isPurging: boolean;
+  purgeConfirmOpen: boolean;
+  setPurgeConfirmOpen: (val: boolean) => void;
+  colors: any;
+}) {
+  if (!isOpen) return null;
+
+  return (
+    <div style={{
+      position: 'fixed',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      background: 'rgba(10, 25, 47, 0.65)',
+      backdropFilter: 'blur(5px)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 9999,
+      padding: '20px'
+    }}>
+      <div style={{
+        background: 'white',
+        borderRadius: '16px',
+        maxWidth: '750px',
+        width: '100%',
+        maxHeight: '90vh',
+        overflowY: 'auto',
+        boxShadow: '0 20px 50px rgba(0,0,0,0.25)',
+        borderTop: `6px solid ${colors.primary}`
+      }}>
+        {/* Header */}
+        <div style={{ padding: '24px 28px', borderBottom: '1px solid #ECEFF1', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <span style={{ fontSize: '1.4rem' }}>🛡️</span>
+              <h2 style={{ margin: 0, fontSize: '1.25rem', color: colors.text, fontWeight: '700' }}>
+                Privacy, Security &amp; Data Governance
+              </h2>
+            </div>
+            <p style={{ margin: '4px 0 0', fontSize: '0.85rem', color: colors.textLight }}>
+              HIPAA De-Identification Standard (§ 164.514(b)) &amp; GDPR Art. 17 "Right to be Forgotten"
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            style={{ background: 'none', border: 'none', fontSize: '1.4rem', color: '#90A4AE', cursor: 'pointer' }}
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Content Body */}
+        <div style={{ padding: '24px 28px' }}>
+          {/* Key Compliance Cards */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginBottom: '24px' }}>
+            <div style={{ background: '#F8FAFC', padding: '14px 18px', borderRadius: '10px', borderLeft: `4px solid ${colors.success}` }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                <span style={{ fontSize: '1rem' }}>🔒</span>
+                <span style={{ fontWeight: '700', fontSize: '0.9rem', color: colors.text }}>Zero Raw Media Disk Persistence</span>
+              </div>
+              <p style={{ margin: 0, fontSize: '0.82rem', color: '#475569', lineHeight: '1.5' }}>
+                Live camera frames and microphone audio chunks exist exclusively in volatile RAM memory buffers during active feature extraction. No raw images, video streams, or audio recordings are ever written to disk or secondary persistent storage.
+              </p>
+            </div>
+
+            <div style={{ background: '#F8FAFC', padding: '14px 18px', borderRadius: '10px', borderLeft: `4px solid ${colors.primary}` }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                <span style={{ fontSize: '1rem' }}>🏷️</span>
+                <span style={{ fontWeight: '700', fontSize: '0.9rem', color: colors.text }}>Cryptographic Salted Pseudonymization</span>
+              </div>
+              <p style={{ margin: 0, fontSize: '0.82rem', color: '#475569', lineHeight: '1.5' }}>
+                Subject records are de-identified via salted SHA-256 cryptographic hashing (e.g. <code>SUBJ-XXXXXXXXXX</code>). Zero Direct Identifiers (names, IP addresses, emails, or MAC addresses) are recorded alongside clinical biomarker vectors.
+              </p>
+            </div>
+
+            <div style={{ background: '#F8FAFC', padding: '14px 18px', borderRadius: '10px', borderLeft: `4px solid #7B1FA2` }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                <span style={{ fontSize: '1rem' }}>⚡</span>
+                <span style={{ fontWeight: '700', fontSize: '0.9rem', color: colors.text }}>Local In-Session Neural Inference</span>
+              </div>
+              <p style={{ margin: 0, fontSize: '0.82rem', color: '#475569', lineHeight: '1.5' }}>
+                BlazeFace landmark detection, Action Unit classifiers, acoustic prosody extractors, and PHQ-8 regression calibration execute locally in runtime memory with zero third-party cloud streaming.
+              </p>
+            </div>
+
+            <div style={{ background: '#F8FAFC', padding: '14px 18px', borderRadius: '10px', borderLeft: `4px solid ${colors.warning}` }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                <span style={{ fontSize: '1rem' }}>🗑️</span>
+                <span style={{ fontWeight: '700', fontSize: '0.9rem', color: colors.text }}>GDPR Art. 17 "Right to be Forgotten"</span>
+              </div>
+              <p style={{ margin: 0, fontSize: '0.82rem', color: '#475569', lineHeight: '1.5' }}>
+                Patients and clinicians hold unconditional rights to permanently delete all stored longitudinal records and extracted behavioral metrics from storage in a single click.
+              </p>
+            </div>
+
+            <div style={{ background: '#F8FAFC', padding: '14px 18px', borderRadius: '10px', borderLeft: `4px solid #00897B` }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                <span style={{ fontSize: '1rem' }}>📦</span>
+                <span style={{ fontWeight: '700', fontSize: '0.9rem', color: colors.text }}>Data Portability &amp; Clinical Interoperability</span>
+              </div>
+              <p style={{ margin: 0, fontSize: '0.82rem', color: '#475569', lineHeight: '1.5' }}>
+                Export complete longitudinal session trajectories as structured de-identified JSON conforming to clinical psychiatric research standards for EMR/EHR import.
+              </p>
+            </div>
+          </div>
+
+          {/* Purge Confirmation Warning */}
+          {purgeConfirmOpen && (
+            <div style={{
+              background: '#FFEBEE',
+              border: `1.5px solid ${colors.accent}`,
+              borderRadius: '10px',
+              padding: '16px 20px',
+              marginBottom: '20px'
+            }}>
+              <div style={{ fontWeight: '700', color: colors.accent, fontSize: '0.92rem', marginBottom: '4px' }}>
+                ⚠️ Confirm Irreversible Data Destruction (GDPR Art. 17)
+              </div>
+              <p style={{ margin: '0 0 14px', fontSize: '0.82rem', color: '#B71C1C', lineHeight: '1.4' }}>
+                This action will permanently delete all session history, calibrated PHQ-8 scores, and longitudinal trajectories from storage. This cannot be undone.
+              </p>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button
+                  onClick={onPurge}
+                  disabled={isPurging}
+                  style={{
+                    padding: '8px 16px',
+                    background: colors.accent,
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '6px',
+                    fontSize: '0.85rem',
+                    fontWeight: '700',
+                    cursor: 'pointer'
+                  }}
+                >
+                  {isPurging ? 'Purging...' : 'Yes, Permanently Purge All Data'}
+                </button>
+                <button
+                  onClick={() => setPurgeConfirmOpen(false)}
+                  style={{
+                    padding: '8px 14px',
+                    background: 'white',
+                    color: colors.text,
+                    border: '1px solid #CFD8DC',
+                    borderRadius: '6px',
+                    fontSize: '0.85rem',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Action Buttons */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button
+                onClick={onExport}
+                disabled={isExporting}
+                style={{
+                  padding: '10px 18px',
+                  background: colors.lightBg,
+                  color: colors.primary,
+                  border: `1.5px solid ${colors.primary}`,
+                  borderRadius: '8px',
+                  fontSize: '0.85rem',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+              >
+                <span>📥</span>
+                <span>{isExporting ? 'Exporting...' : 'Export De-Identified Record (JSON)'}</span>
+              </button>
+              {!purgeConfirmOpen && (
+                <button
+                  onClick={() => setPurgeConfirmOpen(true)}
+                  style={{
+                    padding: '10px 16px',
+                    background: '#FFEBEE',
+                    color: colors.accent,
+                    border: `1px solid ${colors.accent}`,
+                    borderRadius: '8px',
+                    fontSize: '0.85rem',
+                    fontWeight: '600',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px'
+                  }}
+                >
+                  <span>🗑️</span>
+                  <span>Purge All Data (Right to be Forgotten)</span>
+                </button>
+              )}
+            </div>
+
+            <button
+              onClick={onClose}
+              style={{
+                padding: '10px 22px',
+                background: colors.primary,
+                color: 'white',
+                border: 'none',
+                borderRadius: '8px',
+                fontSize: '0.85rem',
+                fontWeight: '600',
+                cursor: 'pointer'
+              }}
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Phase 5: Longitudinal History Modal
+function LongitudinalHistoryModal({
+  isOpen,
+  onClose,
+  history,
+  onExport,
+  onPurgeClick,
+  onPrint,
+  colors
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  history: LongitudinalRecord[];
+  onExport: () => void;
+  onPurgeClick: () => void;
+  onPrint: () => void;
+  colors: any;
+}) {
+  if (!isOpen) return null;
+
+  const baselineSession = history[0];
+  const latestSession = history[history.length - 1];
+  const netDelta = latestSession && baselineSession ? latestSession.phq8_score - baselineSession.phq8_score : 0;
+
+  return (
+    <div style={{
+      position: 'fixed',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      background: 'rgba(10, 25, 47, 0.65)',
+      backdropFilter: 'blur(5px)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 9999,
+      padding: '20px'
+    }}>
+      <div style={{
+        background: 'white',
+        borderRadius: '16px',
+        maxWidth: '920px',
+        width: '100%',
+        maxHeight: '90vh',
+        overflowY: 'auto',
+        boxShadow: '0 20px 50px rgba(0,0,0,0.25)',
+        borderTop: `6px solid ${colors.primary}`
+      }}>
+        {/* Header */}
+        <div style={{ padding: '22px 28px', borderBottom: '1px solid #ECEFF1', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <span style={{ fontSize: '1.4rem' }}>📈</span>
+              <h2 style={{ margin: 0, fontSize: '1.25rem', color: colors.text, fontWeight: '700' }}>
+                Patient Longitudinal Affect Trajectory
+              </h2>
+            </div>
+            <p style={{ margin: '4px 0 0', fontSize: '0.85rem', color: colors.textLight }}>
+              Session-over-session depression screening history with DSM-5 / APA ±5 point clinical response thresholding
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            style={{ background: 'none', border: 'none', fontSize: '1.4rem', color: '#90A4AE', cursor: 'pointer' }}
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Modal Body */}
+        <div style={{ padding: '24px 28px' }}>
+          {/* Quick Metrics Bar */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+            gap: '14px',
+            marginBottom: '20px'
+          }}>
+            <div style={{ background: '#F8FAFC', padding: '12px 16px', borderRadius: '10px', border: '1px solid #E2E8F0' }}>
+              <div style={{ fontSize: '0.75rem', color: colors.textLight }}>Subject Identifier (Salted)</div>
+              <div style={{ fontSize: '1.1rem', fontWeight: '700', color: colors.primary, marginTop: '2px' }}>
+                {latestSession?.subject_id || 'SUBJ-DEFAULT'}
+              </div>
+            </div>
+
+            <div style={{ background: '#F8FAFC', padding: '12px 16px', borderRadius: '10px', border: '1px solid #E2E8F0' }}>
+              <div style={{ fontSize: '0.75rem', color: colors.textLight }}>Total Screenings</div>
+              <div style={{ fontSize: '1.1rem', fontWeight: '700', color: colors.text, marginTop: '2px' }}>
+                {history.length} {history.length === 1 ? 'Session' : 'Sessions'}
+              </div>
+            </div>
+
+            <div style={{ background: '#F8FAFC', padding: '12px 16px', borderRadius: '10px', border: '1px solid #E2E8F0' }}>
+              <div style={{ fontSize: '0.75rem', color: colors.textLight }}>Baseline → Latest</div>
+              <div style={{ fontSize: '1.1rem', fontWeight: '700', color: colors.text, marginTop: '2px' }}>
+                {baselineSession ? `${baselineSession.phq8_score} pts` : '--'} → {latestSession ? `${latestSession.phq8_score} pts` : '--'}
+              </div>
+            </div>
+
+            <div style={{ background: '#F8FAFC', padding: '12px 16px', borderRadius: '10px', border: '1px solid #E2E8F0' }}>
+              <div style={{ fontSize: '0.75rem', color: colors.textLight }}>Net Trajectory Shift (Δ)</div>
+              <div style={{
+                fontSize: '1.1rem',
+                fontWeight: '800',
+                color: netDelta <= -5 ? colors.success : netDelta >= 5 ? colors.accent : colors.text,
+                marginTop: '2px'
+              }}>
+                {netDelta > 0 ? `+${netDelta}` : netDelta} pts {netDelta <= -5 ? '▼' : netDelta >= 5 ? '▲' : ''}
+              </div>
+            </div>
+          </div>
+
+          {/* Longitudinal Chart */}
+          <div style={{ marginBottom: '24px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+              <h4 style={{ margin: 0, fontSize: '0.9rem', color: colors.text, fontWeight: '700' }}>
+                PHQ-8 Severity Trajectory Over Time
+              </h4>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <LegendItem color="#2E7D32" label="Minimal (0-4)" />
+                <LegendItem color="#FBC02D" label="Mild (5-9)" />
+                <LegendItem color="#F57C00" label="Moderate (10-14)" />
+                <LegendItem color="#E31937" label="Mod. Severe / Severe (15+)" />
+              </div>
+            </div>
+            <LongitudinalTrajectoryChart history={history} />
+          </div>
+
+          {/* Chronological Session Table */}
+          <div style={{ marginBottom: '24px' }}>
+            <h4 style={{ margin: '0 0 10px', fontSize: '0.9rem', color: colors.text, fontWeight: '700' }}>
+              Chronological Screening Sessions
+            </h4>
+            {history.length === 0 ? (
+              <div style={{ padding: '20px', textAlign: 'center', color: '#90A4AE', background: '#FAFAFA', borderRadius: '8px' }}>
+                No session history recorded yet.
+              </div>
+            ) : (
+              <div style={{ border: '1px solid #E2E8F0', borderRadius: '10px', overflow: 'hidden' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+                  <thead>
+                    <tr style={{ background: '#F1F5F9', borderBottom: '1px solid #E2E8F0', color: colors.textLight, textAlign: 'left' }}>
+                      <th style={{ padding: '10px 14px' }}>Session / Date</th>
+                      <th style={{ padding: '10px 14px' }}>PHQ-8 Score</th>
+                      <th style={{ padding: '10px 14px' }}>Severity Tier</th>
+                      <th style={{ padding: '10px 14px' }}>Δ vs Previous</th>
+                      <th style={{ padding: '10px 14px' }}>Clinical Trajectory Status</th>
+                      <th style={{ padding: '10px 14px' }}>Symptom Domains</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...history].reverse().map((rec, rIdx) => (
+                      <tr key={rec.session_id || rIdx} style={{ borderBottom: '1px solid #F1F5F9' }}>
+                        <td style={{ padding: '10px 14px' }}>
+                          <div style={{ fontWeight: '600', color: colors.text }}>{rec.datetime_utc}</div>
+                          <div style={{ fontSize: '0.72rem', color: '#94A3B8' }}>{rec.session_id}</div>
+                        </td>
+                        <td style={{ padding: '10px 14px' }}>
+                          <span style={{ fontSize: '1rem', fontWeight: '800', color: rec.phq8_score >= 10 ? colors.accent : colors.success }}>
+                            {rec.phq8_score}
+                          </span>
+                          <span style={{ fontSize: '0.72rem', color: '#94A3B8', marginLeft: '4px' }}>
+                            ({rec.phq8_score_continuous})
+                          </span>
+                        </td>
+                        <td style={{ padding: '10px 14px' }}>
+                          <span style={{
+                            padding: '3px 8px',
+                            borderRadius: '6px',
+                            fontWeight: '600',
+                            fontSize: '0.75rem',
+                            background: rec.phq8_score >= 15 ? '#FFEBEE' : rec.phq8_score >= 10 ? '#FFF8E1' : '#E8F5E9',
+                            color: rec.phq8_score >= 15 ? colors.accent : rec.phq8_score >= 10 ? colors.warning : colors.success
+                          }}>
+                            {rec.severity_tier}
+                          </span>
+                        </td>
+                        <td style={{ padding: '10px 14px' }}>
+                          <span style={{
+                            fontWeight: '700',
+                            color: rec.delta_from_previous <= -5 ? colors.success : rec.delta_from_previous >= 5 ? colors.accent : colors.text
+                          }}>
+                            {rec.delta_from_previous > 0 ? `+${rec.delta_from_previous}` : rec.delta_from_previous} pts
+                          </span>
+                        </td>
+                        <td style={{ padding: '10px 14px' }}>
+                          <span style={{
+                            fontSize: '0.75rem',
+                            fontWeight: '600',
+                            color: rec.delta_from_previous <= -5 ? colors.success : rec.delta_from_previous >= 5 ? colors.accent : colors.textLight
+                          }}>
+                            {rec.trajectory_status}
+                          </span>
+                        </td>
+                        <td style={{ padding: '10px 14px', fontSize: '0.74rem', color: '#64748B' }}>
+                          {rec.symptom_domains ? (
+                            <div>
+                              Anhedonia: {Math.round(rec.symptom_domains.anhedonia || 0)}% • Psychomotor: {Math.round(rec.symptom_domains.psychomotor_retardation || 0)}%
+                            </div>
+                          ) : '--'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* Footer Controls */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button
+                onClick={onExport}
+                style={{
+                  padding: '10px 16px',
+                  background: '#ECEFF1',
+                  color: colors.text,
+                  border: 'none',
+                  borderRadius: '8px',
+                  fontSize: '0.85rem',
+                  fontWeight: '600',
+                  cursor: 'pointer'
+                }}
+              >
+                📥 Export History (JSON)
+              </button>
+              <button
+                onClick={onPrint}
+                style={{
+                  padding: '10px 16px',
+                  background: colors.lightBg,
+                  color: colors.primary,
+                  border: `1px solid ${colors.primary}`,
+                  borderRadius: '8px',
+                  fontSize: '0.85rem',
+                  fontWeight: '600',
+                  cursor: 'pointer'
+                }}
+              >
+                🖨️ Print Clinical Summary
+              </button>
+              <button
+                onClick={onPurgeClick}
+                style={{
+                  padding: '10px 16px',
+                  background: '#FFEBEE',
+                  color: colors.accent,
+                  border: `1px solid ${colors.accent}`,
+                  borderRadius: '8px',
+                  fontSize: '0.85rem',
+                  fontWeight: '600',
+                  cursor: 'pointer'
+                }}
+              >
+                🗑️ Purge History
+              </button>
+            </div>
+
+            <button
+              onClick={onClose}
+              style={{
+                padding: '10px 22px',
+                background: colors.primary,
+                color: 'white',
+                border: 'none',
+                borderRadius: '8px',
+                fontSize: '0.85rem',
+                fontWeight: '600',
+                cursor: 'pointer'
+              }}
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Phase 5: Official Printable Clinical EHR Document (A4 / Paper format)
+function PrintableClinicalEhr({
+  report,
+  history,
+  colors
+}: {
+  report: ProtocolReport | null;
+  history: LongitudinalRecord[];
+  colors: any;
+}) {
+  const latestRec = report?.longitudinal_trajectory || (history.length > 0 ? history[history.length - 1] : null);
+  const nowStr = new Date().toUTCString();
+
+  return (
+    <div style={{
+      maxWidth: '800px',
+      margin: '0 auto',
+      padding: '24px 28px',
+      background: 'white',
+      color: '#111827',
+      fontFamily: '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
+    }}>
+      {/* Hospital / Institutional Letterhead Header */}
+      <div style={{ borderBottom: '3px solid #1565C0', paddingBottom: '14px', marginBottom: '18px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div>
+          <h1 style={{ margin: 0, fontSize: '1.3rem', fontWeight: '800', color: '#1565C0', letterSpacing: '-0.3px', textTransform: 'uppercase' }}>
+            FacialPulse Clinical Screening System
+          </h1>
+          <div style={{ fontSize: '0.82rem', fontWeight: '600', color: '#374151', marginTop: '2px' }}>
+            Department of Computational Affective Neuroscience &amp; Clinical Psychiatry
+          </div>
+          <div style={{ fontSize: '0.75rem', color: '#6B7280' }}>
+            Automated Audio-Visual Biomarker Screening • DAIC-WOZ / AVEC Machine Learning Engine
+          </div>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <div style={{ display: 'inline-block', padding: '3px 8px', background: '#FEE2E2', color: '#991B1B', fontWeight: '700', fontSize: '0.7rem', borderRadius: '4px', border: '1px solid #F87171' }}>
+            CONFIDENTIAL MEDICAL RECORD
+          </div>
+          <div style={{ fontSize: '0.72rem', color: '#4B5563', marginTop: '4px' }}>
+            Printed: {nowStr}
+          </div>
+        </div>
+      </div>
+
+      {/* Patient Demographics & Session Meta Table */}
+      <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '18px', fontSize: '0.8rem', border: '1px solid #D1D5DB' }}>
+        <tbody>
+          <tr style={{ background: '#F9FAFB' }}>
+            <td style={{ padding: '6px 10px', fontWeight: '700', color: '#374151', width: '22%', border: '1px solid #E5E7EB' }}>Subject ID (Salted):</td>
+            <td style={{ padding: '6px 10px', color: '#111827', width: '28%', border: '1px solid #E5E7EB' }}>{latestRec?.subject_id || 'SUBJ-DEFAULT'}</td>
+            <td style={{ padding: '6px 10px', fontWeight: '700', color: '#374151', width: '22%', border: '1px solid #E5E7EB' }}>Session ID:</td>
+            <td style={{ padding: '6px 10px', color: '#111827', width: '28%', border: '1px solid #E5E7EB' }}>{report?.session_id || latestRec?.session_id || 'fp_sess'}</td>
+          </tr>
+          <tr>
+            <td style={{ padding: '6px 10px', fontWeight: '700', color: '#374151', border: '1px solid #E5E7EB' }}>Evaluation Date:</td>
+            <td style={{ padding: '6px 10px', color: '#111827', border: '1px solid #E5E7EB' }}>{latestRec?.datetime_utc || nowStr}</td>
+            <td style={{ padding: '6px 10px', fontWeight: '700', color: '#374151', border: '1px solid #E5E7EB' }}>Protocol Modality:</td>
+            <td style={{ padding: '6px 10px', color: '#111827', border: '1px solid #E5E7EB' }}>
+              {report?.multimodal?.mode === 'multimodal_fusion' ? 'Multimodal Audio-Visual Fusion' : 'Visual Video Track'}
+            </td>
+          </tr>
+          <tr style={{ background: '#F9FAFB' }}>
+            <td style={{ padding: '6px 10px', fontWeight: '700', color: '#374151', border: '1px solid #E5E7EB' }}>Elicitation Protocol:</td>
+            <td style={{ padding: '6px 10px', color: '#111827', border: '1px solid #E5E7EB' }}>4-Phase Guided Affect Protocol (43s)</td>
+            <td style={{ padding: '6px 10px', fontWeight: '700', color: '#374151', border: '1px solid #E5E7EB' }}>Assessment Target:</td>
+            <td style={{ padding: '6px 10px', color: '#111827', border: '1px solid #E5E7EB' }}>DSM-5 PHQ-8 Depressive Symptoms</td>
+          </tr>
+        </tbody>
+      </table>
+
+      {/* Primary Diagnostic Findings & Scores */}
+      <div style={{ background: '#F3F4F6', padding: '14px 18px', borderRadius: '8px', marginBottom: '18px', border: '1px solid #E5E7EB' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+          <div>
+            <span style={{ fontSize: '1.25rem', fontWeight: '800', color: '#111827' }}>
+              PHQ-8 Score: {report?.phq8_assessment?.phq8_score || latestRec?.phq8_score || 0} / 24
+            </span>
+            <span style={{
+              marginLeft: '12px',
+              padding: '3px 10px',
+              borderRadius: '6px',
+              fontSize: '0.8rem',
+              fontWeight: '700',
+              background: '#E5E7EB',
+              color: '#1F2937'
+            }}>
+              Tier: {report?.phq8_assessment?.severity_tier || latestRec?.severity_tier || 'Minimal'}
+            </span>
+          </div>
+          <div>
+            <span style={{
+              padding: '4px 10px',
+              borderRadius: '6px',
+              fontSize: '0.78rem',
+              fontWeight: '700',
+              background: (report?.phq8_assessment?.clinical_threshold_met ?? (latestRec?.phq8_score || 0) >= 10) ? '#FEE2E2' : '#D1FAE5',
+              color: (report?.phq8_assessment?.clinical_threshold_met ?? (latestRec?.phq8_score || 0) >= 10) ? '#991B1B' : '#065F46'
+            }}>
+              {(report?.phq8_assessment?.clinical_threshold_met ?? (latestRec?.phq8_score || 0) >= 10) ? 'DSM-5 CLINICAL CUTOFF MET (≥10)' : 'BELOW CLINICAL CUTOFF (<10)'}
+            </span>
+          </div>
+        </div>
+        <div style={{ fontSize: '0.78rem', color: '#4B5563' }}>
+          Continuous Score: {report?.phq8_assessment?.phq8_score_continuous || latestRec?.phq8_score_continuous} • 
+          95% CI: [{report?.phq8_assessment?.confidence_interval_95.lower || '--'}, {report?.phq8_assessment?.confidence_interval_95.upper || '--'}] • 
+          Longitudinal Trajectory: {latestRec?.trajectory_status || 'Baseline Session'} (Δ = {latestRec?.delta_from_previous || 0} pts)
+        </div>
+      </div>
+
+      {/* DSM-5 Symptom Domain Breakdown Table */}
+      <h3 style={{ fontSize: '0.9rem', fontWeight: '700', color: '#1F2937', margin: '0 0 8px', borderBottom: '1px solid #E5E7EB', paddingBottom: '4px' }}>
+        DSM-5 / PHQ-8 Symptom Domain Mapping
+      </h3>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem', marginBottom: '18px', border: '1px solid #E5E7EB' }}>
+        <thead>
+          <tr style={{ background: '#F9FAFB', color: '#374151', textAlign: 'left', borderBottom: '1px solid #D1D5DB' }}>
+            <th style={{ padding: '6px 10px', width: '15%' }}>DSM-5 Criterion</th>
+            <th style={{ padding: '6px 10px', width: '35%' }}>Clinical Item Title</th>
+            <th style={{ padding: '6px 10px', width: '15%' }}>Calibrated Score</th>
+            <th style={{ padding: '6px 10px', width: '35%' }}>Extracted Behavioral Biomarkers</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style={{ padding: '6px 10px', fontWeight: '600', border: '1px solid #E5E7EB' }}>Item 1</td>
+            <td style={{ padding: '6px 10px', border: '1px solid #E5E7EB' }}>Anhedonia / Diminished Pleasure</td>
+            <td style={{ padding: '6px 10px', fontWeight: '700', border: '1px solid #E5E7EB' }}>{report?.phq8_assessment?.item_breakdown.item_1_anhedonia.score ?? '--'} / 3</td>
+            <td style={{ padding: '6px 10px', color: '#4B5563', border: '1px solid #E5E7EB' }}>Peak smile blunting, prolonged smile latency, attenuated zygomaticus activation</td>
+          </tr>
+          <tr style={{ background: '#F9FAFB' }}>
+            <td style={{ padding: '6px 10px', fontWeight: '600', border: '1px solid #E5E7EB' }}>Item 2</td>
+            <td style={{ padding: '6px 10px', border: '1px solid #E5E7EB' }}>Depressed / Dysphoric Mood</td>
+            <td style={{ padding: '6px 10px', fontWeight: '700', border: '1px solid #E5E7EB' }}>{report?.phq8_assessment?.item_breakdown.item_2_depressed_mood.score ?? '--'} / 3</td>
+            <td style={{ padding: '6px 10px', color: '#4B5563', border: '1px solid #E5E7EB' }}>AU15 Lip corner depressor dwell, persistent negative facial affect</td>
+          </tr>
+          <tr>
+            <td style={{ padding: '6px 10px', fontWeight: '600', border: '1px solid #E5E7EB' }}>Item 4</td>
+            <td style={{ padding: '6px 10px', border: '1px solid #E5E7EB' }}>Fatigue / Psychomotor Energy Loss</td>
+            <td style={{ padding: '6px 10px', fontWeight: '700', border: '1px solid #E5E7EB' }}>{report?.phq8_assessment?.item_breakdown.item_4_fatigue_blunting.score ?? '--'} / 3</td>
+            <td style={{ padding: '6px 10px', color: '#4B5563', border: '1px solid #E5E7EB' }}>Affect flatness index, reduced facial velocity, acoustic spectral flattening</td>
+          </tr>
+          <tr style={{ background: '#F9FAFB' }}>
+            <td style={{ padding: '6px 10px', fontWeight: '600', border: '1px solid #E5E7EB' }}>Item 7</td>
+            <td style={{ padding: '6px 10px', border: '1px solid #E5E7EB' }}>Cognitive Tension / Difficulty Concentrating</td>
+            <td style={{ padding: '6px 10px', fontWeight: '700', border: '1px solid #E5E7EB' }}>{report?.phq8_assessment?.item_breakdown.item_7_concentration_tension.score ?? '--'} / 3</td>
+            <td style={{ padding: '6px 10px', color: '#4B5563', border: '1px solid #E5E7EB' }}>AU04 Corrugator brow furrow dwell during reading, excessive head-down posture</td>
+          </tr>
+          <tr>
+            <td style={{ padding: '6px 10px', fontWeight: '600', border: '1px solid #E5E7EB' }}>Item 8</td>
+            <td style={{ padding: '6px 10px', border: '1px solid #E5E7EB' }}>Psychomotor Retardation / Speech Latency</td>
+            <td style={{ padding: '6px 10px', fontWeight: '700', border: '1px solid #E5E7EB' }}>{report?.phq8_assessment?.item_breakdown.item_8_psychomotor_retardation.score ?? '--'} / 3</td>
+            <td style={{ padding: '6px 10px', color: '#4B5563', border: '1px solid #E5E7EB' }}>Elevated silence ratio (&gt;45%), prolonged pauses (&gt;750ms), prosodic inflection loss</td>
+          </tr>
+        </tbody>
+      </table>
+
+      {/* Multimodal Acoustic & Visual Biomarker Profile */}
+      <h3 style={{ fontSize: '0.9rem', fontWeight: '700', color: '#1F2937', margin: '0 0 8px', borderBottom: '1px solid #E5E7EB', paddingBottom: '4px' }}>
+        Acoustic &amp; Visual Biomarker Profile
+      </h3>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem', marginBottom: '18px', border: '1px solid #E5E7EB' }}>
+        <tbody>
+          <tr>
+            <td style={{ padding: '6px 10px', fontWeight: '600', width: '25%', border: '1px solid #E5E7EB' }}>F0 Pitch Variability (SD):</td>
+            <td style={{ padding: '6px 10px', width: '25%', border: '1px solid #E5E7EB' }}>
+              {report?.multimodal?.acoustic_breakdown?.f0_std_hz ? `${report.multimodal.acoustic_breakdown.f0_std_hz} Hz` : 'N/A'}
+            </td>
+            <td style={{ padding: '6px 10px', fontWeight: '600', width: '25%', border: '1px solid #E5E7EB' }}>Peak Smile / Duchenne:</td>
+            <td style={{ padding: '6px 10px', width: '25%', border: '1px solid #E5E7EB' }}>
+              {report?.phase_metrics?.positive ? `${Math.round(report.phase_metrics.positive.smile_peak * 100)}% (Duchenne: ${report.phase_metrics.positive.duchenne_pct}%)` : 'N/A'}
+            </td>
+          </tr>
+          <tr style={{ background: '#F9FAFB' }}>
+            <td style={{ padding: '6px 10px', fontWeight: '600', border: '1px solid #E5E7EB' }}>Speech Pause Ratio:</td>
+            <td style={{ padding: '6px 10px', border: '1px solid #E5E7EB' }}>
+              {report?.multimodal?.acoustic_breakdown?.pause_ratio ? `${Math.round(report.multimodal.acoustic_breakdown.pause_ratio * 100)}%` : 'N/A'}
+            </td>
+            <td style={{ padding: '6px 10px', fontWeight: '600', border: '1px solid #E5E7EB' }}>AU04 Brow Furrow Dwell:</td>
+            <td style={{ padding: '6px 10px', border: '1px solid #E5E7EB' }}>
+              {report?.phase_metrics?.cognitive ? `${report.phase_metrics.cognitive.brow_tension_pct}%` : 'N/A'}
+            </td>
+          </tr>
+          <tr>
+            <td style={{ padding: '6px 10px', fontWeight: '600', border: '1px solid #E5E7EB' }}>Average Pause Latency:</td>
+            <td style={{ padding: '6px 10px', border: '1px solid #E5E7EB' }}>
+              {report?.multimodal?.acoustic_breakdown?.avg_pause_duration_ms ? `${Math.round(report.multimodal.acoustic_breakdown.avg_pause_duration_ms)} ms` : 'N/A'}
+            </td>
+            <td style={{ padding: '6px 10px', fontWeight: '600', border: '1px solid #E5E7EB' }}>Head-Down Posture Dwell:</td>
+            <td style={{ padding: '6px 10px', border: '1px solid #E5E7EB' }}>
+              {report?.phase_metrics?.cognitive ? `${report.phase_metrics.cognitive.head_down_pct}%` : 'N/A'}
+            </td>
+          </tr>
+          <tr style={{ background: '#F9FAFB' }}>
+            <td style={{ padding: '6px 10px', fontWeight: '600', border: '1px solid #E5E7EB' }}>Cross-Modal Concordance:</td>
+            <td style={{ padding: '6px 10px', border: '1px solid #E5E7EB' }}>
+              {report?.multimodal?.concordance_rate ? `${report.multimodal.concordance_rate}%` : 'N/A'}
+            </td>
+            <td style={{ padding: '6px 10px', fontWeight: '600', border: '1px solid #E5E7EB' }}>Residual Affect Recovery:</td>
+            <td style={{ padding: '6px 10px', border: '1px solid #E5E7EB' }}>
+              {report?.phase_metrics?.recovery ? `+${report.phase_metrics.recovery.residual_brow_diff} Brow / +${report.phase_metrics.recovery.residual_sadness_diff} Sadness` : 'N/A'}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      {/* Clinical Findings Narrative */}
+      {report?.clinical_findings && report.clinical_findings.length > 0 && (
+        <div style={{ marginBottom: '18px' }}>
+          <h3 style={{ fontSize: '0.9rem', fontWeight: '700', color: '#1F2937', margin: '0 0 6px', borderBottom: '1px solid #E5E7EB', paddingBottom: '4px' }}>
+            Primary Clinical Findings
+          </h3>
+          <ul style={{ margin: 0, paddingLeft: '20px', fontSize: '0.78rem', color: '#374151', lineHeight: '1.5' }}>
+            {report.clinical_findings.map((f, i) => (
+              <li key={i}>{f}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* SaMD Regulatory Notice & Clinician Attestation */}
+      <div style={{ marginTop: '24px', borderTop: '2px solid #D1D5DB', paddingTop: '14px' }}>
+        <p style={{ margin: '0 0 16px', fontSize: '0.7rem', color: '#6B7280', lineHeight: '1.4' }}>
+          <strong>FDA SaMD NOTICE (21 CFR 882):</strong> FacialPulse is an investigational software-as-a-medical-device (SaMD) tool intended for adjunctive psychiatric screening and research. This assessment is not a standalone diagnostic evaluation. Clinical correlation by a licensed healthcare professional is required. All data de-identified pursuant to HIPAA § 164.514(b) and GDPR Art. 17.
+        </p>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '30px', marginTop: '20px', fontSize: '0.78rem' }}>
+          <div>
+            <div style={{ borderBottom: '1px solid #9CA3AF', height: '24px', marginBottom: '6px' }} />
+            <div style={{ color: '#4B5563' }}>Evaluating Clinician Signature / License No.</div>
+          </div>
+          <div>
+            <div style={{ borderBottom: '1px solid #9CA3AF', height: '24px', marginBottom: '6px' }} />
+            <div style={{ color: '#4B5563' }}>Date / Clinical Facility Location</div>
+          </div>
+        </div>
       </div>
     </div>
   );

@@ -33,14 +33,16 @@ from mediapipe.tasks.python import vision
 from temporal import TemporalAggregator, BaselineCalibrator
 from protocol import ProtocolSessionManager
 from audio import AcousticAnalyzer
+from longitudinal import LongitudinalTracker
 
 app = FastAPI(title="FacialPulse API", version="1.0.0")
 
-# Temporal Aggregation, Baseline Calibration, Phase 2 Protocol, and Phase 3 Audio Singletons
+# Temporal Aggregation, Baseline Calibration, Phase 2 Protocol, Phase 3 Audio, and Phase 5 Longitudinal Singletons
 temporal_aggregator = TemporalAggregator(window_size=30, ema_alpha=0.35)
 baseline_calibrator = BaselineCalibrator(target_frames=8)
 protocol_manager = ProtocolSessionManager()
 acoustic_analyzer = AcousticAnalyzer(target_sr=16000)
+longitudinal_tracker = LongitudinalTracker()
 
 # CORS for Next.js frontend
 app.add_middleware(
@@ -591,8 +593,14 @@ async def protocol_status():
 
 @app.post("/protocol/report")
 async def protocol_report():
-    """Generate the comprehensive multi-phase assessment report."""
+    """Generate the comprehensive multi-phase assessment report and record longitudinal trajectory."""
     report = protocol_manager.compute_assessment_report()
+    # Phase 5: Automatically record session into longitudinal history
+    try:
+        long_rec = longitudinal_tracker.record_session(report)
+        report["longitudinal_trajectory"] = long_rec
+    except Exception as e:
+        print(f"Longitudinal recording warning: {e}")
     return JSONResponse(content={"success": True, "report": report})
 
 @app.post("/protocol/audio")
@@ -635,6 +643,31 @@ async def ml_predict(data: dict):
         return JSONResponse(content={"success": True, "phq8_assessment": phq8})
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# ============================================================================
+# Phase 5: Privacy, Security & Longitudinal Tracking Endpoints
+# ============================================================================
+
+@app.get("/longitudinal/history")
+async def get_longitudinal_history():
+    """Retrieve chronological screening history for longitudinal trajectory monitoring."""
+    history = longitudinal_tracker.get_subject_history()
+    return JSONResponse(content={"success": True, "history": history})
+
+@app.delete("/longitudinal/purge")
+async def purge_privacy_data():
+    """
+    GDPR Article 17 ('Right to be Forgotten') & HIPAA Data Purge.
+    Permanently destroys all longitudinal history records.
+    """
+    count = longitudinal_tracker.purge_all_data()
+    return JSONResponse(content={"success": True, "message": "All session data permanently purged", "purged_count": count})
+
+@app.get("/longitudinal/export")
+async def export_privacy_data():
+    """Export HIPAA-compliant de-identified longitudinal screening record."""
+    payload = longitudinal_tracker.get_export_payload()
+    return JSONResponse(content={"success": True, "export": payload})
 
 def extract_features(image):
     """Core feature extractor returning landmark, head pose, eye, expression, and AU dicts."""

@@ -436,7 +436,7 @@ class ProtocolSessionManager:
                 })
 
         return {
-            "session_id": self.session_id,
+            "session_id": self.session_id or f"fp_{int(time.time())}",
             "composite_score": final_composite_score,
             "visual_composite_score": composite_score,
             "severity": final_severity,

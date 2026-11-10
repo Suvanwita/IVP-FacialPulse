@@ -87,7 +87,7 @@ class LongitudinalTracker:
                 trajectory_status = "Stable Trajectory (< 2pt variation)"
 
         record = {
-            "session_id": protocol_report.get("session_id", f"fp_{int(now_ts)}"),
+            "session_id": protocol_report.get("session_id") or f"fp_{int(now_ts)}",
             "subject_id": subject_id,
             "timestamp": now_ts,
             "datetime_utc": now_iso,

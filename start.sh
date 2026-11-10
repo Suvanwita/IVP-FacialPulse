@@ -18,6 +18,37 @@ check_port() {
     return $?
 }
 
+get_port_pid() {
+    lsof -ti :$1 2>/dev/null
+}
+
+# Cleanup on exit
+BACKEND_PID=""
+FRONTEND_PID=""
+
+cleanup() {
+    echo -e "\n${YELLOW}Shutting down FacialPulse services...${NC}"
+    if [ -n "$BACKEND_PID" ]; then
+        kill "$BACKEND_PID" 2>/dev/null || true
+    fi
+    if [ -n "$FRONTEND_PID" ]; then
+        kill "$FRONTEND_PID" 2>/dev/null || true
+    fi
+    exit 0
+}
+
+trap cleanup SIGINT SIGTERM
+
+# Optional restart flag: ./start.sh --restart
+if [ "$1" == "--restart" ] || [ "$1" == "-r" ]; then
+    echo -e "${YELLOW}Killing existing processes on ports 8000 and 3000...${NC}"
+    P8000=$(get_port_pid 8000)
+    P3000=$(get_port_pid 3000)
+    [ -n "$P8000" ] && kill -9 $P8000 2>/dev/null && echo "Freed port 8000 (PID $P8000)"
+    [ -n "$P3000" ] && kill -9 $P3000 2>/dev/null && echo "Freed port 3000 (PID $P3000)"
+    sleep 1
+fi
+
 # Start Backend
 echo -e "\n${YELLOW}[1/2] Starting Backend...${NC}"
 cd "$PROJECT_DIR/backend"
@@ -33,7 +64,7 @@ source venv/bin/activate
 pip install -r requirements.txt -q
 
 if check_port 8000; then
-    echo -e "${RED}Port 8000 already in use${NC}"
+    echo -e "${YELLOW}Port 8000 already in use (PID: $(get_port_pid 8000)) - using running instance${NC}"
 else
     echo "Starting FastAPI server on port 8000..."
     uvicorn main:app --host 0.0.0.0 --port 8000 &
@@ -52,7 +83,7 @@ if [ ! -d "node_modules" ]; then
 fi
 
 if check_port 3000; then
-    echo -e "${RED}Port 3000 already in use${NC}"
+    echo -e "${YELLOW}Port 3000 already in use (PID: $(get_port_pid 3000)) - using running instance${NC}"
 else
     echo "Starting Next.js server on port 3000..."
     npm run dev &

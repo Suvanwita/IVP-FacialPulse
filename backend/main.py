@@ -31,12 +31,14 @@ from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
 from temporal import TemporalAggregator, BaselineCalibrator
+from protocol import ProtocolSessionManager
 
 app = FastAPI(title="FacialPulse API", version="1.0.0")
 
-# Temporal Aggregation and Baseline Calibration Singletons
+# Temporal Aggregation, Baseline Calibration, and Phase 2 Protocol Singletons
 temporal_aggregator = TemporalAggregator(window_size=30, ema_alpha=0.35)
 baseline_calibrator = BaselineCalibrator(target_frames=8)
+protocol_manager = ProtocolSessionManager()
 
 # CORS for Next.js frontend
 app.add_middleware(
@@ -510,6 +512,83 @@ async def calibrate_frame(data: dict):
         })
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# ============================================================================
+# Phase 2: Guided Interactive Screening Protocol Endpoints
+# ============================================================================
+
+@app.post("/protocol/start")
+async def start_protocol():
+    """Start a new 4-phase guided clinical screening protocol."""
+    info = protocol_manager.start_session()
+    return JSONResponse(content={"success": True, "phase_info": info})
+
+@app.post("/protocol/frame")
+async def protocol_feed_frame(data: dict):
+    """Feed a frame to the active guided screening protocol."""
+    if not protocol_manager.active:
+        return JSONResponse(content={"success": False, "message": "No active protocol session"})
+
+    try:
+        image_data = data.get("image", "")
+        if not image_data:
+            raise HTTPException(status_code=400, detail="No image data provided")
+
+        if "base64," in image_data:
+            image_data = image_data.split("base64,")[1]
+
+        image_bytes = base64.b64decode(image_data)
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+        if image is None:
+            raise HTTPException(status_code=400, detail="Invalid image")
+
+        features = extract_features(image)
+        if not features or not features.get("face_detected"):
+            phase_info = protocol_manager.get_current_phase_info()
+            return JSONResponse(content={
+                "success": True,
+                "face_detected": False,
+                "phase_info": phase_info,
+                "features": None
+            })
+
+        phase_info = protocol_manager.feed_frame(features)
+
+        # When protocol finishes, synchronize baseline to temporal_aggregator
+        if not protocol_manager.active and protocol_manager.baseline_values:
+            temporal_aggregator.set_baseline(protocol_manager.baseline_values)
+
+        return JSONResponse(content={
+            "success": True,
+            "face_detected": True,
+            "phase_info": phase_info,
+            "features": {
+                "smile_probability": features.get("expressions", {}).get("smile_probability", 0.0),
+                "head_pose": features.get("head_pose"),
+                "action_units": features.get("action_units")
+            }
+        })
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/protocol/status")
+async def protocol_status():
+    """Get active protocol phase info."""
+    return JSONResponse(content=protocol_manager.get_current_phase_info())
+
+@app.post("/protocol/report")
+async def protocol_report():
+    """Generate the comprehensive multi-phase assessment report."""
+    report = protocol_manager.compute_assessment_report()
+    return JSONResponse(content={"success": True, "report": report})
+
+@app.post("/protocol/cancel")
+async def cancel_protocol():
+    """Cancel the active protocol session."""
+    protocol_manager.cancel_session()
+    return JSONResponse(content={"success": True, "message": "Protocol cancelled"})
 
 def extract_features(image):
     """Core feature extractor returning landmark, head pose, eye, expression, and AU dicts."""

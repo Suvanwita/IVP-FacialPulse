@@ -10,6 +10,8 @@ Implements a 4-Phase Affect Elicitation Screening Protocol:
 import time
 import numpy as np
 from typing import Dict, List, Optional, Any
+from audio import AcousticAnalyzer
+from fusion import MultimodalFusionEngine
 
 
 PHASE_CONFIG = {
@@ -55,6 +57,11 @@ class ProtocolSessionManager:
         self.phase_frames: Dict[str, List[Dict[str, Any]]] = {p: [] for p in self.phases}
         self.baseline_values: Dict[str, float] = {}
 
+        # Multimodal audio analysis & fusion
+        self.acoustic_analyzer = AcousticAnalyzer(target_sr=16000)
+        self.fusion_engine = MultimodalFusionEngine()
+        self.acoustic_report: Optional[Dict[str, Any]] = None
+
     def start_session(self) -> Dict[str, Any]:
         """Start a new 4-phase guided assessment session."""
         self.active = True
@@ -64,8 +71,20 @@ class ProtocolSessionManager:
         self.session_start_time = self.phase_start_time
         self.phase_frames = {p: [] for p in self.phases}
         self.baseline_values = {}
+        self.acoustic_report = None
 
         return self.get_current_phase_info()
+
+    def feed_audio(self, audio_data: str) -> Dict[str, Any]:
+        """Process recorded audio from the session (e.g. reading task) via base64 WAV."""
+        try:
+            samples, sr = self.acoustic_analyzer.decode_base64_wav(audio_data)
+            self.acoustic_report = self.acoustic_analyzer.analyze(samples, sr)
+            return self.acoustic_report
+        except Exception as e:
+            err_report = self.acoustic_analyzer._empty_response(f"Audio processing error: {str(e)}")
+            self.acoustic_report = err_report
+            return err_report
 
     def get_current_phase_info(self) -> Dict[str, Any]:
         if not self.active or self.current_phase_idx >= len(self.phases):
@@ -345,6 +364,40 @@ class ProtocolSessionManager:
         if not findings:
             findings.append("Positive smile reactivity and baseline affective recovery were fully preserved.")
 
+        # Multimodal Audio-Visual Fusion
+        vis_report_for_fusion = {
+            "composite_risk_score": float(composite_score),
+            "sub_scores": {
+                "anhedonia": float(anhedonia_score),
+                "cognitive_tension": float(cognitive_burden_score),
+                "recovery_impairment": float(recovery_impairment)
+            },
+            "severity_tier": severity,
+            "clinical_narrative": summary_text
+        }
+
+        fusion_result = self.fusion_engine.fuse(vis_report_for_fusion, self.acoustic_report)
+
+        final_composite_score = composite_score
+        final_severity = severity
+        final_severity_code = severity_code
+        final_summary = summary_text
+
+        if fusion_result.get("mode") == "multimodal_fusion":
+            final_composite_score = int(round(fusion_result["multimodal_composite_score"]))
+            final_severity = fusion_result["severity_tier"]
+            final_severity_code = "high" if final_composite_score >= 65 else ("moderate" if final_composite_score >= 40 else ("mild" if final_composite_score >= 20 else "minimal"))
+            final_summary = fusion_result["clinical_narrative"]
+
+            # Add acoustic findings
+            ac_bk = fusion_result.get("acoustic_breakdown", {})
+            if ac_bk.get("monotone_prosody_index", 0.0) >= 55.0:
+                findings.append(f"Acoustic prosodic monotonicity detected (F0 Std: {ac_bk.get('f0_std_hz')} Hz, Monotone Index: {ac_bk.get('monotone_prosody_index')}).")
+            if ac_bk.get("pause_retardation_index", 0.0) >= 50.0:
+                findings.append(f"Psychomotor speech retardation: pause ratio {float(ac_bk.get('pause_ratio', 0))*100:.0f}% with avg pause duration {ac_bk.get('avg_pause_duration_ms')}ms.")
+            if ac_bk.get("vocal_strain_index", 0.0) >= 40.0:
+                findings.append(f"Acoustic vocal perturbation/strain observed during reading passage (Index: {ac_bk.get('vocal_strain_index')}).")
+
         # Aggregate timeline across all phases with phase markers
         full_timeline = []
         for phase_name in self.phases:
@@ -360,11 +413,13 @@ class ProtocolSessionManager:
 
         return {
             "session_id": self.session_id,
-            "composite_score": composite_score,
-            "severity": severity,
-            "severity_code": severity_code,
-            "summary": summary_text,
+            "composite_score": final_composite_score,
+            "visual_composite_score": composite_score,
+            "severity": final_severity,
+            "severity_code": final_severity_code,
+            "summary": final_summary,
             "clinical_findings": findings,
+            "multimodal": fusion_result,
             "subscores": {
                 "anhedonia_score": int(round(anhedonia_score)),
                 "cognitive_burden_score": int(round(cognitive_burden_score)),

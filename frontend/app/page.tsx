@@ -44,13 +44,48 @@ interface ProtocolPhaseInfo {
   elapsed_sec: number;
 }
 
+interface MultimodalFusionReport {
+  mode: 'multimodal_fusion' | 'visual_only';
+  multimodal_composite_score: number;
+  visual_score: number;
+  acoustic_score: number | null;
+  concordance_rate: number | null;
+  affective_congruence: string;
+  symptom_domains: {
+    affective_flatness: number;
+    psychomotor_retardation: number;
+    anhedonia: number;
+    cognitive_tension: number;
+  };
+  acoustic_breakdown?: {
+    monotone_prosody_index: number;
+    pause_retardation_index: number;
+    vocal_strain_index: number;
+    energy_flatness_index: number;
+    f0_mean_hz: number;
+    f0_std_hz: number;
+    pause_ratio: number;
+    avg_pause_duration_ms: number;
+    speech_pause_ratio: number;
+    duration_sec: number;
+  };
+  confidence: {
+    level: string;
+    reason: string;
+  };
+  severity_tier: string;
+  clinical_narrative: string;
+}
+
 interface ProtocolReport {
   session_id: string;
   composite_score: number;
+  visual_composite_score?: number;
   severity: string;
   severity_code: 'minimal' | 'mild' | 'moderate' | 'high';
   summary: string;
   clinical_findings: string[];
+  multimodal?: MultimodalFusionReport;
   subscores: {
     anhedonia_score: number;
     cognitive_burden_score: number;
@@ -88,6 +123,45 @@ interface ProtocolReport {
     smile: number;
     pitch: number;
   }>;
+}
+
+function encodeWav(samples: Float32Array, sampleRate: number): string {
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+
+  const writeString = (offset: number, str: string) => {
+    for (let i = 0; i < str.length; i++) {
+      view.setUint8(offset + i, str.charCodeAt(i));
+    }
+  };
+
+  writeString(0, 'RIFF');
+  view.setUint32(4, 36 + samples.length * 2, true);
+  writeString(8, 'WAVE');
+  writeString(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM format
+  view.setUint16(22, 1, true); // Mono
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true); // 16-bit
+  writeString(36, 'data');
+  view.setUint32(40, samples.length * 2, true);
+
+  let offset = 44;
+  for (let i = 0; i < samples.length; i++, offset += 2) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+  }
+
+  let binary = '';
+  const bytes = new Uint8Array(buffer);
+  const len = bytes.byteLength;
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return 'data:audio/wav;base64,' + btoa(binary);
 }
 
 interface AnalysisResult {
@@ -128,6 +202,18 @@ export default function Home() {
   const [protocolPhaseInfo, setProtocolPhaseInfo] = useState<ProtocolPhaseInfo | null>(null);
   const [protocolLiveFeatures, setProtocolLiveFeatures] = useState<any>(null);
   const [protocolReportData, setProtocolReportData] = useState<ProtocolReport | null>(null);
+
+  // Phase 3: Multimodal Audio-Visual State
+  const [micActive, setMicActive] = useState(false);
+  const [micAvailable, setMicAvailable] = useState(false);
+  const [audioLevel, setAudioLevel] = useState(0);
+  const [voiceDetected, setVoiceDetected] = useState(false);
+  const [freqBins, setFreqBins] = useState<number[]>(new Array(16).fill(0));
+
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const audioChunksRef = useRef<Float32Array[]>([]);
+  const recordingAudioRef = useRef(false);
 
   // Theme Colors
   const colors = {
@@ -214,6 +300,27 @@ export default function Home() {
 
             // Check if protocol session completed
             if (data.phase_info.completed) {
+              if (recordingAudioRef.current && audioChunksRef.current.length > 0) {
+                recordingAudioRef.current = false;
+                const totalLen = audioChunksRef.current.reduce((acc, c) => acc + c.length, 0);
+                const merged = new Float32Array(totalLen);
+                let offset = 0;
+                for (const chunk of audioChunksRef.current) {
+                  merged.set(chunk, offset);
+                  offset += chunk.length;
+                }
+                const sampleRate = audioContextRef.current?.sampleRate || 16000;
+                const wavBase64 = encodeWav(merged, sampleRate);
+                try {
+                  await fetch('http://localhost:8000/protocol/audio', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ audio: wavBase64 })
+                  });
+                } catch (audioErr) {
+                  console.error('Error uploading protocol audio', audioErr);
+                }
+              }
               const repRes = await fetch('http://localhost:8000/protocol/report', { method: 'POST' });
               const repData = await repRes.json();
               if (repData.success) {
@@ -233,16 +340,99 @@ export default function Home() {
     };
   }, [protocolActive, isStreaming]);
 
+  // Phase 3: Real-time Audio Spectrum & Equalizer Meter
+  useEffect(() => {
+    let animId: number;
+    const updateMeter = () => {
+      if (analyserRef.current && micActive) {
+        const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
+        analyserRef.current.getByteFrequencyData(dataArray);
+
+        const bins: number[] = [];
+        const step = Math.max(1, Math.floor(dataArray.length / 16));
+        let sum = 0;
+        for (let i = 0; i < 16; i++) {
+          let bSum = 0;
+          for (let j = 0; j < step; j++) {
+            bSum += dataArray[i * step + j] || 0;
+          }
+          const val = bSum / step;
+          bins.push(Math.round((val / 255) * 100));
+          sum += val;
+        }
+        setFreqBins(bins);
+
+        const avg = sum / 16;
+        setAudioLevel(Math.round((avg / 255) * 100));
+        setVoiceDetected(avg > 18);
+      }
+      animId = requestAnimationFrame(updateMeter);
+    };
+
+    if (isStreaming && micActive) {
+      animId = requestAnimationFrame(updateMeter);
+    }
+    return () => {
+      if (animId) cancelAnimationFrame(animId);
+    };
+  }, [isStreaming, micActive]);
+
+  const setupAudio = (stream: MediaStream) => {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      audioContextRef.current = ctx;
+
+      const source = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.8;
+      source.connect(analyser);
+      analyserRef.current = analyser;
+
+      const processor = ctx.createScriptProcessor(2048, 1, 1);
+      source.connect(processor);
+      processor.connect(ctx.destination);
+
+      processor.onaudioprocess = (e) => {
+        if (recordingAudioRef.current) {
+          const input = e.inputBuffer.getChannelData(0);
+          audioChunksRef.current.push(new Float32Array(input));
+        }
+      };
+    } catch (err) {
+      console.warn('Audio initialization warning:', err);
+    }
+  };
+
   const startCamera = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 640, height: 480, facingMode: 'user' }
-      });
+      let stream: MediaStream;
+      let hasMic = false;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: 640, height: 480, facingMode: 'user' },
+          audio: true
+        });
+        hasMic = true;
+      } catch (audioErr) {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: 640, height: 480, facingMode: 'user' }
+        });
+      }
+
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         setIsStreaming(true);
         setError(null);
         setScanStatus('ready');
+        setMicAvailable(hasMic);
+        setMicActive(hasMic);
+
+        if (hasMic) {
+          setupAudio(stream);
+        }
       }
     } catch (err) {
       setError('Unable to access camera. Please grant camera permission.');
@@ -254,11 +444,18 @@ export default function Home() {
       const tracks = (videoRef.current.srcObject as MediaStream).getTracks();
       tracks.forEach(track => track.stop());
       videoRef.current.srcObject = null;
+      if (audioContextRef.current) {
+        audioContextRef.current.close().catch(() => {});
+        audioContextRef.current = null;
+      }
+      recordingAudioRef.current = false;
+      audioChunksRef.current = [];
       setIsStreaming(false);
       setIsAutoCapture(false);
       setIsCalibrating(false);
       setProtocolActive(false);
       setScanStatus('ready');
+      setMicActive(false);
     }
   };
 
@@ -302,13 +499,18 @@ export default function Home() {
     }
   }, [isAnalyzing]);
 
-  // Phase 2: Start Guided Clinical Protocol
+  // Phase 2 & 3: Start Guided Clinical Protocol with Multimodal Ingestion
   const startGuidedProtocol = async () => {
     if (!isStreaming) {
       await startCamera();
     }
     setIsAutoCapture(false);
     setProtocolReportData(null);
+    audioChunksRef.current = [];
+    recordingAudioRef.current = true;
+    if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
+      audioContextRef.current.resume();
+    }
 
     try {
       const res = await fetch('http://localhost:8000/protocol/start', { method: 'POST' });
@@ -323,6 +525,8 @@ export default function Home() {
   };
 
   const cancelGuidedProtocol = async () => {
+    recordingAudioRef.current = false;
+    audioChunksRef.current = [];
     try {
       await fetch('http://localhost:8000/protocol/cancel', { method: 'POST' });
     } catch (err) {}
@@ -503,7 +707,35 @@ export default function Home() {
         </div>
 
         {/* Right: Actions */}
-        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+          {/* Phase 3: Microphone & Multimodal Status Pill */}
+          {isStreaming && (
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '6px 12px',
+              borderRadius: '20px',
+              background: micActive ? '#E8F5E9' : '#ECEFF1',
+              border: `1px solid ${micActive ? '#A5D6A7' : '#CFD8DC'}`,
+              fontSize: '0.8rem',
+              fontWeight: '600',
+              color: micActive ? '#2E7D32' : colors.textLight
+            }}>
+              <span>🎙️</span>
+              <span>{micActive ? (voiceDetected ? 'Voice Active' : 'Mic Active (Multimodal)') : 'Visual-Only Mode'}</span>
+              {micActive && (
+                <div style={{
+                  width: '8px',
+                  height: '8px',
+                  borderRadius: '50%',
+                  background: voiceDetected ? '#00C853' : '#81C784',
+                  boxShadow: voiceDetected ? '0 0 8px #00C853' : 'none'
+                }} />
+              )}
+            </div>
+          )}
+
           {!isBaselineCalibrated && !isCalibrating && !protocolActive && (
             <button
               onClick={startCalibration}
@@ -652,20 +884,64 @@ export default function Home() {
               {protocolPhaseInfo.instruction}
             </p>
 
-            {/* Reading Task Passage (Step 3) */}
+            {/* Reading Task Passage (Step 3) with Real-Time Acoustic Monitor */}
             {protocolPhaseInfo.reading_passage && (
-              <div style={{
-                marginTop: '12px',
-                padding: '14px 18px',
-                background: 'white',
-                borderRadius: '8px',
-                borderLeft: `4px solid ${colors.primary}`,
-                fontSize: '1.05rem',
-                lineHeight: '1.6',
-                color: '#263238',
-                fontStyle: 'italic'
-              }}>
-                "{protocolPhaseInfo.reading_passage}"
+              <div>
+                <div style={{
+                  marginTop: '12px',
+                  padding: '14px 18px',
+                  background: 'white',
+                  borderRadius: '8px',
+                  borderLeft: `4px solid ${colors.primary}`,
+                  fontSize: '1.05rem',
+                  lineHeight: '1.6',
+                  color: '#263238',
+                  fontStyle: 'italic'
+                }}>
+                  "{protocolPhaseInfo.reading_passage}"
+                </div>
+
+                {/* Multimodal Acoustic Reading Monitor */}
+                <div style={{
+                  marginTop: '10px',
+                  padding: '10px 16px',
+                  background: voiceDetected ? '#E8F5E9' : '#ECEFF1',
+                  borderRadius: '8px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '15px',
+                  transition: 'background 0.2s',
+                  border: `1px solid ${voiceDetected ? '#A5D6A7' : '#CFD8DC'}`
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <span style={{ fontSize: '1.2rem' }}>🎙️</span>
+                    <div>
+                      <div style={{ fontSize: '0.85rem', fontWeight: '700', color: voiceDetected ? '#1B5E20' : colors.text }}>
+                        {voiceDetected ? 'Voice Detected — Reading Passage in Progress' : micActive ? 'Listening... Please read the passage aloud' : 'Microphone Muted (Visual-Only Mode)'}
+                      </div>
+                      <div style={{ fontSize: '0.72rem', color: voiceDetected ? '#2E7D32' : colors.textLight }}>
+                        Capturing fundamental frequency (F0), pause-to-speech ratio, and vocal perturbation
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Real-time Equalizer Waveform */}
+                  <div style={{ display: 'flex', alignItems: 'flex-end', gap: '3px', height: '24px' }}>
+                    {freqBins.map((bin, bIdx) => (
+                      <div
+                        key={bIdx}
+                        style={{
+                          width: '4px',
+                          height: `${Math.max(4, (bin / 100) * 24)}px`,
+                          background: voiceDetected ? '#2E7D32' : '#90A4AE',
+                          borderRadius: '2px',
+                          transition: 'height 0.08s ease'
+                        }}
+                      />
+                    ))}
+                  </div>
+                </div>
               </div>
             )}
 
@@ -690,7 +966,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* Phase 2: Post-Assessment Comprehensive Clinical Report Modal */}
+      {/* Phase 2 & 3: Post-Assessment Comprehensive Multimodal Clinical Report Modal */}
       {protocolReportData && (
         <div style={{
           maxWidth: '1500px',
@@ -701,9 +977,9 @@ export default function Home() {
           boxShadow: '0 10px 40px rgba(0,0,0,0.12)',
           borderTop: `6px solid ${protocolReportData.composite_score > 60 ? colors.accent : protocolReportData.composite_score > 35 ? colors.warning : colors.success}`
         }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px', flexWrap: 'wrap', gap: '15px' }}>
             <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
                 <span style={{
                   background: protocolReportData.severity_code === 'high' ? colors.accentLight : protocolReportData.severity_code === 'moderate' ? '#FFF8E1' : '#E8F5E9',
                   color: protocolReportData.severity_code === 'high' ? colors.accent : protocolReportData.severity_code === 'moderate' ? colors.warning : colors.success,
@@ -714,10 +990,20 @@ export default function Home() {
                 }}>
                   {protocolReportData.severity.toUpperCase()}
                 </span>
+                <span style={{
+                  background: protocolReportData.multimodal?.mode === 'multimodal_fusion' ? '#E8F5E9' : '#ECEFF1',
+                  color: protocolReportData.multimodal?.mode === 'multimodal_fusion' ? '#1B5E20' : colors.textLight,
+                  padding: '4px 10px',
+                  borderRadius: '12px',
+                  fontSize: '0.75rem',
+                  fontWeight: '700'
+                }}>
+                  {protocolReportData.multimodal?.mode === 'multimodal_fusion' ? '⚡ MULTIMODAL FUSION: ACTIVE' : 'VISUAL-ONLY TRACK'}
+                </span>
                 <span style={{ fontSize: '0.8rem', color: colors.textLight }}>Session ID: {protocolReportData.session_id}</span>
               </div>
               <h2 style={{ margin: '8px 0 4px', fontSize: '1.4rem', color: colors.text, fontWeight: '700' }}>
-                Guided 4-Phase Affective Screening Report
+                Guided 4-Phase Affective &amp; Multimodal Screening Report
               </h2>
               <p style={{ margin: 0, fontSize: '0.9rem', color: colors.textLight }}>
                 {protocolReportData.summary}
@@ -729,56 +1015,225 @@ export default function Home() {
                 {protocolReportData.composite_score}%
               </div>
               <div style={{ fontSize: '0.75rem', fontWeight: '600', color: colors.textLight }}>Composite Risk Score</div>
+              {protocolReportData.multimodal?.mode === 'multimodal_fusion' && (
+                <div style={{ fontSize: '0.75rem', color: colors.textLight, marginTop: '3px' }}>
+                  Visual: {protocolReportData.multimodal.visual_score}% • Acoustic: {protocolReportData.multimodal.acoustic_score}%
+                </div>
+              )}
             </div>
           </div>
 
-          {/* 3 Core Diagnostic Subscores */}
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(3, 1fr)',
-            gap: '16px',
-            marginBottom: '24px'
-          }}>
-            {/* Subscore 1: Anhedonia */}
-            <div style={{ background: '#FFFDE7', padding: '16px', borderRadius: '12px', border: '1px solid #FFF59D' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '0.85rem', fontWeight: '700', color: '#F57F17' }}>Anhedonia / Positive Deficit</span>
-                <span style={{ fontSize: '1.2rem', fontWeight: '800', color: '#F57F17' }}>
-                  {protocolReportData.subscores.anhedonia_score}%
-                </span>
+          {/* Phase 3: Cross-Modal Concordance Banner */}
+          {protocolReportData.multimodal?.mode === 'multimodal_fusion' && (
+            <div style={{
+              background: '#F1F8E9',
+              borderRadius: '12px',
+              padding: '14px 18px',
+              marginBottom: '22px',
+              border: '1px solid #C5E1A5',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: '12px'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <span style={{ fontSize: '1.4rem' }}>🔗</span>
+                <div>
+                  <div style={{ fontSize: '0.9rem', fontWeight: '700', color: '#33691E' }}>
+                    Cross-Modal Concordance: {protocolReportData.multimodal.concordance_rate}% ({protocolReportData.multimodal.confidence.level} Confidence)
+                  </div>
+                  <div style={{ fontSize: '0.78rem', color: '#558B2F', marginTop: '2px' }}>
+                    {protocolReportData.multimodal.affective_congruence}
+                  </div>
+                </div>
               </div>
-              <p style={{ margin: '8px 0 0', fontSize: '0.78rem', color: '#5D4037', lineHeight: '1.4' }}>
-                Peak Smile: {Math.round(protocolReportData.phase_metrics.positive.smile_peak * 100)}% • Duchenne Marker: {protocolReportData.phase_metrics.positive.duchenne_pct}%
-                {protocolReportData.phase_metrics.positive.smile_latency_sec !== null ? ` • Latency: ${protocolReportData.phase_metrics.positive.smile_latency_sec}s` : ' • No smile peak'}
-              </p>
+              <div style={{
+                fontSize: '0.75rem',
+                padding: '4px 12px',
+                borderRadius: '14px',
+                background: '#DCEDC8',
+                color: '#33691E',
+                fontWeight: '700'
+              }}>
+                AUDIO-VISUAL SYNCHRONIZED
+              </div>
             </div>
+          )}
 
-            {/* Subscore 2: Cognitive Psychomotor & Tension */}
-            <div style={{ background: '#E3F2FD', padding: '16px', borderRadius: '12px', border: '1px solid #BBDEFB' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '0.85rem', fontWeight: '700', color: colors.primary }}>Cognitive Burden &amp; Tension</span>
-                <span style={{ fontSize: '1.2rem', fontWeight: '800', color: colors.primary }}>
-                  {protocolReportData.subscores.cognitive_burden_score}%
-                </span>
+          {/* Core Diagnostic Subscores (Multimodal 4-Domain or Visual 3-Domain) */}
+          {protocolReportData.multimodal?.mode === 'multimodal_fusion' ? (
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(4, 1fr)',
+              gap: '16px',
+              marginBottom: '24px'
+            }}>
+              {/* Domain 1: Affective Flatness / Hypomimia */}
+              <div style={{ background: '#FFFDE7', padding: '16px', borderRadius: '12px', border: '1px solid #FFF59D' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.85rem', fontWeight: '700', color: '#F57F17' }}>Affective Flatness</span>
+                  <span style={{ fontSize: '1.2rem', fontWeight: '800', color: '#F57F17' }}>
+                    {Math.round(protocolReportData.multimodal.symptom_domains.affective_flatness)}%
+                  </span>
+                </div>
+                <p style={{ margin: '8px 0 0', fontSize: '0.78rem', color: '#5D4037', lineHeight: '1.4' }}>
+                  Blunted Facial Expressivity &amp; Acoustic Monotone Prosody
+                </p>
               </div>
-              <p style={{ margin: '8px 0 0', fontSize: '0.78rem', color: '#1A237E', lineHeight: '1.4' }}>
-                Head-Down Dwell: {protocolReportData.phase_metrics.cognitive.head_down_pct}% • Corrugator Brow Tension: {protocolReportData.phase_metrics.cognitive.brow_tension_pct}%
-              </p>
-            </div>
 
-            {/* Subscore 3: Affective Recovery */}
-            <div style={{ background: '#F3E5F5', padding: '16px', borderRadius: '12px', border: '1px solid #E1BEE7' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '0.85rem', fontWeight: '700', color: colors.purple }}>Recovery Impairment</span>
-                <span style={{ fontSize: '1.2rem', fontWeight: '800', color: colors.purple }}>
-                  {protocolReportData.subscores.recovery_impairment_score}%
+              {/* Domain 2: Psychomotor Retardation */}
+              <div style={{ background: '#E3F2FD', padding: '16px', borderRadius: '12px', border: '1px solid #BBDEFB' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.85rem', fontWeight: '700', color: colors.primary }}>Psychomotor Retardation</span>
+                  <span style={{ fontSize: '1.2rem', fontWeight: '800', color: colors.primary }}>
+                    {Math.round(protocolReportData.multimodal.symptom_domains.psychomotor_retardation)}%
+                  </span>
+                </div>
+                <p style={{ margin: '8px 0 0', fontSize: '0.78rem', color: '#1A237E', lineHeight: '1.4' }}>
+                  Head-Down Dwell ({protocolReportData.phase_metrics.cognitive.head_down_pct}%) &amp; Speech Pause Latency
+                </p>
+              </div>
+
+              {/* Domain 3: Anhedonia */}
+              <div style={{ background: '#FFF3E0', padding: '16px', borderRadius: '12px', border: '1px solid #FFE0B2' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.85rem', fontWeight: '700', color: '#E65100' }}>Anhedonia / Positive Deficit</span>
+                  <span style={{ fontSize: '1.2rem', fontWeight: '800', color: '#E65100' }}>
+                    {Math.round(protocolReportData.multimodal.symptom_domains.anhedonia)}%
+                  </span>
+                </div>
+                <p style={{ margin: '8px 0 0', fontSize: '0.78rem', color: '#BF360C', lineHeight: '1.4' }}>
+                  Peak Smile: {Math.round(protocolReportData.phase_metrics.positive.smile_peak * 100)}% • Duchenne: {protocolReportData.phase_metrics.positive.duchenne_pct}%
+                </p>
+              </div>
+
+              {/* Domain 4: Stress & Cognitive Tension */}
+              <div style={{ background: '#F3E5F5', padding: '16px', borderRadius: '12px', border: '1px solid #E1BEE7' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.85rem', fontWeight: '700', color: colors.purple }}>Cognitive Tension</span>
+                  <span style={{ fontSize: '1.2rem', fontWeight: '800', color: colors.purple }}>
+                    {Math.round(protocolReportData.multimodal.symptom_domains.cognitive_tension)}%
+                  </span>
+                </div>
+                <p style={{ margin: '8px 0 0', fontSize: '0.78rem', color: '#4A148C', lineHeight: '1.4' }}>
+                  AU04 Brow Furrow ({protocolReportData.phase_metrics.cognitive.brow_tension_pct}%) &amp; Vocal Strain
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(3, 1fr)',
+              gap: '16px',
+              marginBottom: '24px'
+            }}>
+              {/* Subscore 1: Anhedonia */}
+              <div style={{ background: '#FFFDE7', padding: '16px', borderRadius: '12px', border: '1px solid #FFF59D' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.85rem', fontWeight: '700', color: '#F57F17' }}>Anhedonia / Positive Deficit</span>
+                  <span style={{ fontSize: '1.2rem', fontWeight: '800', color: '#F57F17' }}>
+                    {protocolReportData.subscores.anhedonia_score}%
+                  </span>
+                </div>
+                <p style={{ margin: '8px 0 0', fontSize: '0.78rem', color: '#5D4037', lineHeight: '1.4' }}>
+                  Peak Smile: {Math.round(protocolReportData.phase_metrics.positive.smile_peak * 100)}% • Duchenne Marker: {protocolReportData.phase_metrics.positive.duchenne_pct}%
+                  {protocolReportData.phase_metrics.positive.smile_latency_sec !== null ? ` • Latency: ${protocolReportData.phase_metrics.positive.smile_latency_sec}s` : ' • No smile peak'}
+                </p>
+              </div>
+
+              {/* Subscore 2: Cognitive Psychomotor & Tension */}
+              <div style={{ background: '#E3F2FD', padding: '16px', borderRadius: '12px', border: '1px solid #BBDEFB' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.85rem', fontWeight: '700', color: colors.primary }}>Cognitive Burden &amp; Tension</span>
+                  <span style={{ fontSize: '1.2rem', fontWeight: '800', color: colors.primary }}>
+                    {protocolReportData.subscores.cognitive_burden_score}%
+                  </span>
+                </div>
+                <p style={{ margin: '8px 0 0', fontSize: '0.78rem', color: '#1A237E', lineHeight: '1.4' }}>
+                  Head-Down Dwell: {protocolReportData.phase_metrics.cognitive.head_down_pct}% • Corrugator Brow Tension: {protocolReportData.phase_metrics.cognitive.brow_tension_pct}%
+                </p>
+              </div>
+
+              {/* Subscore 3: Affective Recovery */}
+              <div style={{ background: '#F3E5F5', padding: '16px', borderRadius: '12px', border: '1px solid #E1BEE7' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.85rem', fontWeight: '700', color: colors.purple }}>Recovery Impairment</span>
+                  <span style={{ fontSize: '1.2rem', fontWeight: '800', color: colors.purple }}>
+                    {protocolReportData.subscores.recovery_impairment_score}%
+                  </span>
+                </div>
+                <p style={{ margin: '8px 0 0', fontSize: '0.78rem', color: '#4A148C', lineHeight: '1.4' }}>
+                  Residual Brow Tension: +{protocolReportData.phase_metrics.recovery.residual_brow_diff} • Residual Sadness: +{protocolReportData.phase_metrics.recovery.residual_sadness_diff}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Phase 3: Dedicated Acoustic Speech Biomarkers Panel */}
+          {protocolReportData.multimodal?.acoustic_breakdown && (
+            <div style={{
+              background: '#F0F7FF',
+              padding: '18px 20px',
+              borderRadius: '12px',
+              border: '1px solid #BBDEFB',
+              marginBottom: '24px'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '1.1rem' }}>🎙️</span>
+                  <h4 style={{ margin: 0, fontSize: '0.95rem', color: colors.primary, fontWeight: '700' }}>
+                    Acoustic Speech Biomarkers (Rainbow Passage Analysis)
+                  </h4>
+                </div>
+                <span style={{ fontSize: '0.8rem', color: colors.textLight }}>
+                  Duration: {protocolReportData.multimodal.acoustic_breakdown.duration_sec}s • Sample Rate: 16 kHz
                 </span>
               </div>
-              <p style={{ margin: '8px 0 0', fontSize: '0.78rem', color: '#4A148C', lineHeight: '1.4' }}>
-                Residual Brow Tension: +{protocolReportData.phase_metrics.recovery.residual_brow_diff} • Residual Sadness: +{protocolReportData.phase_metrics.recovery.residual_sadness_diff}
-              </p>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px' }}>
+                <div style={{ background: 'white', padding: '12px', borderRadius: '8px', border: '1px solid #E3F2FD' }}>
+                  <div style={{ fontSize: '0.75rem', color: colors.textLight, fontWeight: '600' }}>Pitch Variation (F0 Std)</div>
+                  <div style={{ fontSize: '1.2rem', fontWeight: '800', color: colors.text, margin: '4px 0' }}>
+                    {protocolReportData.multimodal.acoustic_breakdown.f0_std_hz} Hz
+                  </div>
+                  <div style={{ fontSize: '0.7rem', color: protocolReportData.multimodal.acoustic_breakdown.f0_std_hz < 20 ? colors.accent : colors.success }}>
+                    {protocolReportData.multimodal.acoustic_breakdown.f0_std_hz < 20 ? 'Monotone Prosody' : 'Normal Inflection'}
+                  </div>
+                </div>
+
+                <div style={{ background: 'white', padding: '12px', borderRadius: '8px', border: '1px solid #E3F2FD' }}>
+                  <div style={{ fontSize: '0.75rem', color: colors.textLight, fontWeight: '600' }}>Speech Pause Ratio</div>
+                  <div style={{ fontSize: '1.2rem', fontWeight: '800', color: colors.text, margin: '4px 0' }}>
+                    {Math.round(protocolReportData.multimodal.acoustic_breakdown.pause_ratio * 100)}%
+                  </div>
+                  <div style={{ fontSize: '0.7rem', color: protocolReportData.multimodal.acoustic_breakdown.pause_ratio > 0.45 ? colors.accent : colors.success }}>
+                    {protocolReportData.multimodal.acoustic_breakdown.pause_ratio > 0.45 ? 'Elevated Silence' : 'Normal Fluency'}
+                  </div>
+                </div>
+
+                <div style={{ background: 'white', padding: '12px', borderRadius: '8px', border: '1px solid #E3F2FD' }}>
+                  <div style={{ fontSize: '0.75rem', color: colors.textLight, fontWeight: '600' }}>Avg Pause Duration</div>
+                  <div style={{ fontSize: '1.2rem', fontWeight: '800', color: colors.text, margin: '4px 0' }}>
+                    {Math.round(protocolReportData.multimodal.acoustic_breakdown.avg_pause_duration_ms)} ms
+                  </div>
+                  <div style={{ fontSize: '0.7rem', color: protocolReportData.multimodal.acoustic_breakdown.avg_pause_duration_ms > 750 ? colors.warning : colors.success }}>
+                    {protocolReportData.multimodal.acoustic_breakdown.avg_pause_duration_ms > 750 ? 'Prolonged Pauses' : 'Fluent Rhythm'}
+                  </div>
+                </div>
+
+                <div style={{ background: 'white', padding: '12px', borderRadius: '8px', border: '1px solid #E3F2FD' }}>
+                  <div style={{ fontSize: '0.75rem', color: colors.textLight, fontWeight: '600' }}>Vocal Strain / Jitter</div>
+                  <div style={{ fontSize: '1.2rem', fontWeight: '800', color: colors.text, margin: '4px 0' }}>
+                    {protocolReportData.multimodal.acoustic_breakdown.vocal_strain_index}%
+                  </div>
+                  <div style={{ fontSize: '0.7rem', color: protocolReportData.multimodal.acoustic_breakdown.vocal_strain_index > 40 ? colors.accent : colors.success }}>
+                    {protocolReportData.multimodal.acoustic_breakdown.vocal_strain_index > 40 ? 'Perturbation Alert' : 'Normal Quality'}
+                  </div>
+                </div>
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Clinical Findings Summary */}
           <div style={{ background: '#F8F9FA', padding: '16px 20px', borderRadius: '12px', marginBottom: '24px' }}>

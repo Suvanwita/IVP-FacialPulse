@@ -32,13 +32,15 @@ from mediapipe.tasks.python import vision
 
 from temporal import TemporalAggregator, BaselineCalibrator
 from protocol import ProtocolSessionManager
+from audio import AcousticAnalyzer
 
 app = FastAPI(title="FacialPulse API", version="1.0.0")
 
-# Temporal Aggregation, Baseline Calibration, and Phase 2 Protocol Singletons
+# Temporal Aggregation, Baseline Calibration, Phase 2 Protocol, and Phase 3 Audio Singletons
 temporal_aggregator = TemporalAggregator(window_size=30, ema_alpha=0.35)
 baseline_calibrator = BaselineCalibrator(target_frames=8)
 protocol_manager = ProtocolSessionManager()
+acoustic_analyzer = AcousticAnalyzer(target_sr=16000)
 
 # CORS for Next.js frontend
 app.add_middleware(
@@ -161,7 +163,7 @@ def load_au_model():
         return False
 
 def preprocess_face_for_au(face_image):
-    """Preprocess face image for AU detection (200x200 grayscale)"""
+    """Preprocess face image for AU detection (200x200 grayscale, NCHW layout)"""
     # Convert to grayscale
     if len(face_image.shape) == 3:
         gray = cv2.cvtColor(face_image, cv2.COLOR_BGR2GRAY)
@@ -180,8 +182,8 @@ def preprocess_face_for_au(face_image):
     # Normalize
     normalized = (resized.astype(np.float32) - 128.0) / 128.0
 
-    # Add batch and channel dimensions
-    input_data = np.expand_dims(np.expand_dims(normalized, axis=0), axis=-1)
+    # Model expects NCHW format: (batch=1, channels=1, height=200, width=200)
+    input_data = normalized.reshape(1, 1, 200, 200)
 
     return input_data
 
@@ -209,10 +211,19 @@ def detect_action_units(face_image):
         # Get output
         output_data = interpreter.get_tensor(output_details[0]['index'])
 
-        # Create AU results
+        # Create AU results (apply sigmoid if output is raw logits)
         au_results = {}
         for i, name in enumerate(AU_NAMES):
-            au_results[name] = float(output_data[0][i]) if i < len(output_data[0]) else 0.0
+            if i < len(output_data[0]):
+                val = float(output_data[0][i])
+                # If logits (outside [0, 1]), convert via sigmoid
+                if val < 0.0 or val > 1.0:
+                    prob = float(1.0 / (1.0 + np.exp(-np.clip(val, -20.0, 20.0))))
+                else:
+                    prob = val
+                au_results[name] = round(prob, 4)
+            else:
+                au_results[name] = 0.0
 
         return au_results
     except Exception as e:
@@ -583,6 +594,28 @@ async def protocol_report():
     """Generate the comprehensive multi-phase assessment report."""
     report = protocol_manager.compute_assessment_report()
     return JSONResponse(content={"success": True, "report": report})
+
+@app.post("/protocol/audio")
+async def protocol_feed_audio(data: dict):
+    """Feed recorded audio (WAV base64) to the active/completed protocol session."""
+    audio_data = data.get("audio", "")
+    if not audio_data:
+        raise HTTPException(status_code=400, detail="No audio data provided")
+    report = protocol_manager.feed_audio(audio_data)
+    return JSONResponse(content={"success": True, "acoustic_analysis": report})
+
+@app.post("/audio/analyze")
+async def analyze_audio(data: dict):
+    """Analyze standalone audio chunk (WAV base64) and return acoustic biomarkers."""
+    audio_data = data.get("audio", "")
+    if not audio_data:
+        raise HTTPException(status_code=400, detail="No audio data provided")
+    try:
+        samples, sr = acoustic_analyzer.decode_base64_wav(audio_data)
+        report = acoustic_analyzer.analyze(samples, sr)
+        return JSONResponse(content={"success": True, "acoustic_analysis": report})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/protocol/cancel")
 async def cancel_protocol():

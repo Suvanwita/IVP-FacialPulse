@@ -30,7 +30,13 @@ import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
+from temporal import TemporalAggregator, BaselineCalibrator
+
 app = FastAPI(title="FacialPulse API", version="1.0.0")
+
+# Temporal Aggregation and Baseline Calibration Singletons
+temporal_aggregator = TemporalAggregator(window_size=30, ema_alpha=0.35)
+baseline_calibrator = BaselineCalibrator(target_frames=8)
 
 # CORS for Next.js frontend
 app.add_middleware(
@@ -415,16 +421,102 @@ async def analyze_face_base64(data: dict):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-async def process_image(image):
-    """Process image and return analysis results"""
+@app.post("/temporal/reset")
+async def reset_temporal():
+    """Reset the temporal sliding window buffer."""
+    temporal_aggregator.reset()
+    return {"message": "Temporal buffer reset", "success": True}
+
+@app.post("/temporal/clear-baseline")
+async def clear_baseline():
+    """Clear the calibrated baseline."""
+    temporal_aggregator.clear_baseline()
+    baseline_calibrator.reset()
+    return {"message": "Baseline cleared", "success": True}
+
+@app.get("/temporal/status")
+async def temporal_status():
+    """Get current temporal engine status and baseline."""
+    return {
+        "frames_in_buffer": len(temporal_aggregator.history),
+        "baseline_active": temporal_aggregator.baseline is not None,
+        "baseline": temporal_aggregator.baseline,
+        "calibration_progress": baseline_calibrator.progress,
+        "calibration_samples": len(baseline_calibrator.samples)
+    }
+
+@app.post("/temporal/calibrate")
+async def calibrate_frame(data: dict):
+    """
+    Feed a frame during neutral face calibration session.
+    Automatically establishes baseline when target samples are reached.
+    """
+    try:
+        image_data = data.get("image", "")
+        if not image_data:
+            raise HTTPException(status_code=400, detail="No image data provided")
+
+        if "base64," in image_data:
+            image_data = image_data.split("base64,")[1]
+
+        image_bytes = base64.b64decode(image_data)
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+        if image is None:
+            raise HTTPException(status_code=400, detail="Invalid image")
+
+        features = extract_features(image)
+        if not features or not features.get("face_detected"):
+            return JSONResponse(content={
+                "success": False,
+                "message": "No face detected in calibration frame",
+                "progress": baseline_calibrator.progress,
+                "completed": False
+            })
+
+        aus = features.get("action_units") or {}
+        def get_au(key: str) -> float:
+            for k, v in aus.items():
+                if key in k:
+                    return float(v)
+            return 0.0
+
+        sample = {
+            "AU01": get_au("AU01"),
+            "AU04": get_au("AU04"),
+            "AU12": get_au("AU12"),
+            "AU15": get_au("AU15"),
+            "smile": float(features.get("expressions", {}).get("smile_probability", 0.0)),
+            "pitch": float(features.get("head_pose", {}).get("pitch", 0.0)) if features.get("head_pose") else 0.0,
+            "yaw": float(features.get("head_pose", {}).get("yaw", 0.0)) if features.get("head_pose") else 0.0,
+            "roll": float(features.get("head_pose", {}).get("roll", 0.0)) if features.get("head_pose") else 0.0,
+            "eye_openness": float(features.get("eye_analysis", {}).get("average_openness", 0.5)) if features.get("eye_analysis") else 0.5
+        }
+
+        is_complete = baseline_calibrator.add_sample(sample)
+        baseline = None
+        if is_complete:
+            baseline = baseline_calibrator.compute_baseline()
+            temporal_aggregator.set_baseline(baseline)
+
+        return JSONResponse(content={
+            "success": True,
+            "samples_collected": len(baseline_calibrator.samples),
+            "target_samples": baseline_calibrator.target_frames,
+            "progress": baseline_calibrator.progress,
+            "completed": is_complete,
+            "baseline": baseline
+        })
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+def extract_features(image):
+    """Core feature extractor returning landmark, head pose, eye, expression, and AU dicts."""
     global face_landmarker, face_mesh, face_detector
 
     if face_landmarker is None and face_mesh is None and face_detector is None:
-        return JSONResponse(content={
-            "success": False,
-            "message": "Face landmarker not initialized",
-            "data": None
-        })
+        return None
 
     # Convert BGR to RGB
     rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
@@ -437,18 +529,11 @@ async def process_image(image):
     if face_landmarker is not None:
         # Create MediaPipe Image
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_image)
-
-        # Detect face landmarks
         detection_result = face_landmarker.detect(mp_image)
 
         if not detection_result.face_landmarks:
-            return JSONResponse(content={
-                "success": False,
-                "message": "No face detected",
-                "data": None
-            })
+            return {"face_detected": False}
 
-        # Get first face
         face_landmarks = detection_result.face_landmarks[0]
         blendshapes = detection_result.face_blendshapes[0] if detection_result.face_blendshapes else None
         transformation_matrixes = detection_result.facial_transformation_matrixes
@@ -456,37 +541,26 @@ async def process_image(image):
         # Fallback to FaceMesh (CPU-only)
         results = face_mesh.process(rgb_image)
         if not results.multi_face_landmarks:
-            return JSONResponse(content={
-                "success": False,
-                "message": "No face detected",
-                "data": None
-            })
+            return {"face_detected": False}
         face_landmarks = results.multi_face_landmarks[0].landmark
     elif face_detector is not None:
         # Final fallback: OpenCV Haar cascade
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         faces = face_detector.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(80, 80))
         if len(faces) == 0:
-            return JSONResponse(content={
-                "success": False,
-                "message": "No face detected",
-                "data": None
-            })
-        # Use largest detected face
+            return {"face_detected": False}
         x, y, w_box, h_box = max(faces, key=lambda f: f[2] * f[3])
         bbox = (x, y, x + w_box, y + h_box)
 
     h, w = image.shape[:2]
 
     if bbox is None:
-        # Get bounding box from landmarks
         x_coords = [lm.x * w for lm in face_landmarks]
         y_coords = [lm.y * h for lm in face_landmarks]
 
         x_min, x_max = int(min(x_coords)), int(max(x_coords))
         y_min, y_max = int(min(y_coords)), int(max(y_coords))
 
-        # Add padding
         padding = 20
         x_min = max(0, x_min - padding)
         y_min = max(0, y_min - padding)
@@ -509,29 +583,23 @@ async def process_image(image):
     if blendshapes:
         for bs in blendshapes:
             name_lower = bs.category_name.lower()
-
-            # Eye blink detection
             if "eyeblinkleft" in name_lower or "eye_blink_left" in name_lower:
                 left_eye_openness = 1.0 - bs.score
             elif "eyeblinkright" in name_lower or "eye_blink_right" in name_lower:
                 right_eye_openness = 1.0 - bs.score
 
-            # Smile detection from various blendshape names
             if any(s in name_lower for s in ["smile", "mouthsmile", "mouth_smile", "jawopen"]):
                 if "smile" in name_lower:
                     smile_from_blendshapes = max(smile_from_blendshapes, bs.score)
                 elif "jawopen" in name_lower:
-                    # Jaw open contributes partially to smile
                     smile_from_blendshapes = max(smile_from_blendshapes, bs.score * 0.3)
 
-    # Calculate smile from landmarks as backup
     smile_from_landmarks = calculate_smile_from_landmarks(face_landmarks) if face_landmarks else 0.0
 
     # Crop face for AU detection
     face_crop = image[y_min:y_max, x_min:x_max]
     au_results = detect_action_units(face_crop)
 
-    # Get AU12 (Lip Corner Puller) for smile indication
     smile_from_au12 = 0.0
     if au_results:
         for name, value in au_results.items():
@@ -539,8 +607,6 @@ async def process_image(image):
                 smile_from_au12 = value
                 break
 
-    # Combine all smile signals (weighted average)
-    # Priority: blendshapes > AU12 > landmarks
     if smile_from_blendshapes > 0.1:
         smile_probability = smile_from_blendshapes
     elif smile_from_au12 > 0.1:
@@ -548,41 +614,65 @@ async def process_image(image):
     else:
         smile_probability = smile_from_landmarks
 
-    # Ensure it's in valid range
     smile_probability = float(min(1.0, max(0.0, smile_probability)))
 
-    # Prepare response
-    response_data = {
-        "success": True,
-        "message": "Face analyzed successfully",
-        "data": {
-            "face_detected": True,
-            "bounding_box": {
-                "x": x_min,
-                "y": y_min,
-                "width": x_max - x_min,
-                "height": y_max - y_min
-            },
-            "head_pose": head_pose,
-            "eye_analysis": {
-                "left_eye_openness": float(left_eye_openness),
-                "right_eye_openness": float(right_eye_openness),
-                "average_openness": float((left_eye_openness + right_eye_openness) / 2)
-            },
-            "expressions": {
-                "smile_probability": smile_probability,
-                "smile_details": {
-                    "from_blendshapes": float(smile_from_blendshapes),
-                    "from_au12": float(smile_from_au12),
-                    "from_landmarks": float(smile_from_landmarks)
-                }
-            },
-            "action_units": au_results,
-            "landmarks_count": len(face_landmarks) if face_landmarks else 0
-        }
+    return {
+        "face_detected": True,
+        "bounding_box": {
+            "x": x_min,
+            "y": y_min,
+            "width": x_max - x_min,
+            "height": y_max - y_min
+        },
+        "head_pose": head_pose,
+        "eye_analysis": {
+            "left_eye_openness": float(left_eye_openness),
+            "right_eye_openness": float(right_eye_openness),
+            "average_openness": float((left_eye_openness + right_eye_openness) / 2)
+        },
+        "expressions": {
+            "smile_probability": smile_probability,
+            "smile_details": {
+                "from_blendshapes": float(smile_from_blendshapes),
+                "from_au12": float(smile_from_au12),
+                "from_landmarks": float(smile_from_landmarks)
+            }
+        },
+        "action_units": au_results,
+        "landmarks_count": len(face_landmarks) if face_landmarks else 0
     }
 
-    return JSONResponse(content=response_data)
+async def process_image(image):
+    """Process image, calculate features, and update temporal aggregation."""
+    features = extract_features(image)
+    if features is None:
+        return JSONResponse(content={
+            "success": False,
+            "message": "Face detectors not initialized",
+            "data": None
+        })
+
+    if not features.get("face_detected"):
+        return JSONResponse(content={
+            "success": False,
+            "message": "No face detected",
+            "data": None
+        })
+
+    # Feed temporal aggregator
+    temporal_analysis = temporal_aggregator.add_frame({
+        "action_units": features.get("action_units"),
+        "expressions": features.get("expressions"),
+        "head_pose": features.get("head_pose"),
+        "eye_analysis": features.get("eye_analysis")
+    })
+    features["temporal_analysis"] = temporal_analysis
+
+    return JSONResponse(content={
+        "success": True,
+        "message": "Face analyzed successfully",
+        "data": features
+    })
 
 if __name__ == "__main__":
     import uvicorn

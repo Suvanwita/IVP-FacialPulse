@@ -2,6 +2,33 @@
 
 import { useRef, useState, useCallback, useEffect } from 'react';
 
+interface TemporalAnalysis {
+  ready: boolean;
+  frames_count: number;
+  score: number;
+  smoothed_score: number;
+  baseline_active: boolean;
+  factors: string[];
+  metrics: {
+    au04_dwell_pct: number;
+    au15_dwell_pct: number;
+    au01_dwell_pct: number;
+    head_down_pct: number;
+    low_eye_pct: number;
+    smile_max: number;
+    smile_variance: number;
+    affect_flatness_index: number;
+    psychomotor_velocity: number;
+  };
+  timeline: Array<{
+    time: number;
+    au04: number;
+    au15: number;
+    smile: number;
+    pitch: number;
+  }>;
+}
+
 interface AnalysisResult {
   success: boolean;
   message: string;
@@ -13,6 +40,7 @@ interface AnalysisResult {
     expressions: { smile_probability: number };
     action_units: Record<string, number> | null;
     landmarks_count: number;
+    temporal_analysis?: TemporalAnalysis;
   } | null;
 }
 
@@ -28,18 +56,29 @@ export default function Home() {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [scanStatus, setScanStatus] = useState<'ready' | 'scanning' | 'success' | 'no-face'>('ready');
 
-  // FacialPulse Theme Colors
+  // Phase 1: Baseline Calibration & Temporal Screening States
+  const [isCalibrating, setIsCalibrating] = useState(false);
+  const [calibrationProgress, setCalibrationProgress] = useState(0);
+  const [calibrationStep, setCalibrationStep] = useState(0);
+  const [isBaselineCalibrated, setIsBaselineCalibrated] = useState(false);
+  const [baselineData, setBaselineData] = useState<Record<string, number> | null>(null);
+
+  const [assessmentActive, setAssessmentActive] = useState(false);
+  const [assessmentTimeLeft, setAssessmentTimeLeft] = useState(30);
+
+  // Theme Colors
   const colors = {
     primary: '#1565C0',      // Medical Blue
     primaryDark: '#0D47A1',  // Deep Blue
-    accent: '#E31937',       // Red / Alert
+    accent: '#E31937',       // Alert Red
     accentLight: '#FFEBEE',  // Light Red bg
     lightBg: '#E3F2FD',      // Light Blue bg
     text: '#1A237E',         // Dark text
     textLight: '#546E7A',
     white: '#FFFFFF',
     success: '#2E7D32',
-    warning: '#F57C00'
+    warning: '#F57C00',
+    purple: '#7B1FA2'
   };
 
   // Update time every second
@@ -48,7 +87,7 @@ export default function Home() {
     return () => clearInterval(timer);
   }, []);
 
-  // Check API status on mount
+  // Check API and temporal status on mount
   useEffect(() => {
     fetch('http://localhost:8000/')
       .then(res => res.json())
@@ -56,20 +95,48 @@ export default function Home() {
         setApiStatus(data.model_loaded ? 'connected' : 'connected');
       })
       .catch(() => setApiStatus('disconnected'));
+
+    fetch('http://localhost:8000/temporal/status')
+      .then(res => res.json())
+      .then(data => {
+        if (data.baseline_active) {
+          setIsBaselineCalibrated(true);
+          setBaselineData(data.baseline);
+        }
+      })
+      .catch(() => {});
   }, []);
 
   // Auto capture interval
   useEffect(() => {
     let interval: NodeJS.Timeout;
-    if (isAutoCapture && isStreaming) {
+    if (isAutoCapture && isStreaming && !isCalibrating) {
       interval = setInterval(() => {
         captureAndAnalyze();
-      }, 1500);
+      }, 1200);
     }
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [isAutoCapture, isStreaming]);
+  }, [isAutoCapture, isStreaming, isCalibrating]);
+
+  // Timed 30-second assessment countdown
+  useEffect(() => {
+    let timer: NodeJS.Timeout;
+    if (assessmentActive && assessmentTimeLeft > 0) {
+      timer = setInterval(() => {
+        setAssessmentTimeLeft(prev => {
+          if (prev <= 1) {
+            setAssessmentActive(false);
+            setIsAutoCapture(false);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
+    return () => clearInterval(timer);
+  }, [assessmentActive, assessmentTimeLeft]);
 
   const startCamera = async () => {
     try {
@@ -94,6 +161,8 @@ export default function Home() {
       videoRef.current.srcObject = null;
       setIsStreaming(false);
       setIsAutoCapture(false);
+      setAssessmentActive(false);
+      setIsCalibrating(false);
       setScanStatus('ready');
     }
   };
@@ -104,7 +173,6 @@ export default function Home() {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
-
     if (!ctx) return;
 
     canvas.width = video.videoWidth;
@@ -112,7 +180,6 @@ export default function Home() {
     ctx.drawImage(video, 0, 0);
 
     const imageData = canvas.toDataURL('image/jpeg', 0.8);
-
     setIsAnalyzing(true);
     setScanStatus('scanning');
 
@@ -140,45 +207,93 @@ export default function Home() {
     }
   }, [isAnalyzing]);
 
-  // Calculate Depression Risk Score
-  const calculateDepressionRisk = () => {
-    if (!result?.data?.action_units) return null;
-
-    const aus = result.data.action_units;
-    let riskScore = 0;
-    let factors: string[] = [];
-
-    // AU04 - Brow Lowerer (worry)
-    const au04 = Object.entries(aus).find(([k]) => k.includes('AU04'))?.[1] || 0;
-    if (au04 > 0.4) { riskScore += 20; factors.push('Brow furrowing (AU04)'); }
-
-    // AU15 - Lip Corner Depressor (sadness)
-    const au15 = Object.entries(aus).find(([k]) => k.includes('AU15'))?.[1] || 0;
-    if (au15 > 0.4) { riskScore += 25; factors.push('Lip corner depression (AU15)'); }
-
-    // AU01 - Inner Brow Raiser (distress)
-    const au01 = Object.entries(aus).find(([k]) => k.includes('AU01'))?.[1] || 0;
-    if (au01 > 0.5) { riskScore += 15; factors.push('Inner brow elevation (AU01)'); }
-
-    // Low smile
-    if (result.data.expressions.smile_probability < 0.2) {
-      riskScore += 15; factors.push('Reduced smile');
+  // Calibration routine (8 frames neutral face)
+  const startCalibration = async () => {
+    if (!isStreaming) {
+      await startCamera();
     }
+    setIsCalibrating(true);
+    setCalibrationStep(0);
+    setCalibrationProgress(0);
+    setIsAutoCapture(false);
 
-    // Head down (negative pitch)
-    if (result.data.head_pose && result.data.head_pose.pitch < -10) {
-      riskScore += 10; factors.push('Head downward tilt');
-    }
+    let collected = 0;
+    const interval = setInterval(async () => {
+      if (!videoRef.current || !canvasRef.current) return;
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
 
-    // Low eye openness
-    if (result.data.eye_analysis.average_openness < 0.5) {
-      riskScore += 15; factors.push('Reduced eye openness');
-    }
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0);
+      const imageData = canvas.toDataURL('image/jpeg', 0.8);
 
-    return { score: Math.min(100, riskScore), factors };
+      try {
+        const res = await fetch('http://localhost:8000/temporal/calibrate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image: imageData })
+        });
+        const data = await res.json();
+        if (data.success) {
+          collected = data.samples_collected;
+          setCalibrationStep(collected);
+          setCalibrationProgress(data.progress);
+          if (data.completed) {
+            clearInterval(interval);
+            setIsCalibrating(false);
+            setIsBaselineCalibrated(true);
+            setBaselineData(data.baseline);
+            await fetch('http://localhost:8000/temporal/reset', { method: 'POST' });
+          }
+        }
+      } catch (err) {
+        console.error('Calibration error', err);
+      }
+    }, 450);
   };
 
-  const depressionRisk = result?.success ? calculateDepressionRisk() : null;
+  const clearBaseline = async () => {
+    try {
+      await fetch('http://localhost:8000/temporal/clear-baseline', { method: 'POST' });
+      setIsBaselineCalibrated(false);
+      setBaselineData(null);
+      setCalibrationStep(0);
+      setCalibrationProgress(0);
+    } catch (err) {
+      console.error('Clear baseline error', err);
+    }
+  };
+
+  const resetTemporal = async () => {
+    try {
+      await fetch('http://localhost:8000/temporal/reset', { method: 'POST' });
+      setResult(prev => {
+        if (!prev || !prev.data) return prev;
+        return {
+          ...prev,
+          data: {
+            ...prev.data,
+            temporal_analysis: undefined
+          }
+        };
+      });
+    } catch (err) {
+      console.error('Reset temporal error', err);
+    }
+  };
+
+  const startTimedAssessment = async () => {
+    if (!isStreaming) {
+      await startCamera();
+    }
+    await resetTemporal();
+    setAssessmentActive(true);
+    setAssessmentTimeLeft(30);
+    setIsAutoCapture(true);
+  };
 
   const formatDate = (date: Date) => {
     return date.toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
@@ -192,20 +307,21 @@ export default function Home() {
   };
 
   const time = formatTime(currentTime);
+  const temporal = result?.data?.temporal_analysis;
 
   return (
     <div style={{
       minHeight: '100vh',
       background: 'linear-gradient(180deg, #F5F7FA 0%, #E8EEF5 100%)',
-      padding: '30px 40px',
+      padding: '24px 36px',
       fontFamily: '"Inter", system-ui, -apple-system, sans-serif'
     }}>
       {/* Header Bar */}
       <div style={{
         background: `linear-gradient(135deg, ${colors.primary} 0%, ${colors.primaryDark} 100%)`,
         borderRadius: '16px',
-        padding: '20px 30px',
-        marginBottom: '25px',
+        padding: '18px 28px',
+        marginBottom: '20px',
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',
@@ -218,19 +334,128 @@ export default function Home() {
             style={{ height: '48px', width: '48px', objectFit: 'contain' }}
           />
           <div>
-            <h1 style={{ margin: 0, fontSize: '1.6rem', fontWeight: '700', color: 'white', letterSpacing: '-0.3px' }}>
+            <h1 style={{ margin: 0, fontSize: '1.5rem', fontWeight: '700', color: 'white', letterSpacing: '-0.3px' }}>
               FacialPulse
             </h1>
             <p style={{ margin: 0, fontSize: '0.85rem', color: 'rgba(255,255,255,0.85)' }}>
-              AI Mental Wellness &amp; Facial Analysis
+              AI Mental Wellness &amp; Facial Expression Dynamics
             </p>
           </div>
         </div>
         <div style={{ textAlign: 'right', color: 'white' }}>
-          <div style={{ fontSize: '2rem', fontWeight: '300' }}>
+          <div style={{ fontSize: '1.8rem', fontWeight: '300' }}>
             {time.hours}:{time.minutes}<span style={{ fontSize: '1rem', opacity: 0.8 }}>:{time.seconds}</span>
           </div>
-          <div style={{ fontSize: '0.85rem', opacity: 0.8 }}>{formatDate(currentTime)}</div>
+          <div style={{ fontSize: '0.8rem', opacity: 0.8 }}>{formatDate(currentTime)}</div>
+        </div>
+      </div>
+
+      {/* Phase 1: Baseline Calibration & Assessment Control Banner */}
+      <div style={{
+        maxWidth: '1500px',
+        margin: '0 auto 20px',
+        background: 'white',
+        borderRadius: '14px',
+        padding: '14px 20px',
+        boxShadow: '0 2px 12px rgba(0,0,0,0.04)',
+        display: 'flex',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: '15px'
+      }}>
+        {/* Left: Calibration Status */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{
+            width: '12px',
+            height: '12px',
+            borderRadius: '50%',
+            background: isBaselineCalibrated ? colors.success : isCalibrating ? colors.warning : '#B0BEC5'
+          }} />
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '0.9rem', fontWeight: '600', color: colors.text }}>
+                {isBaselineCalibrated ? 'Morphological Baseline: Active' : isCalibrating ? 'Calibrating Neutral Face...' : 'Baseline: Not Calibrated'}
+              </span>
+              {isBaselineCalibrated && (
+                <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: '10px', background: '#E8F5E9', color: colors.success, fontWeight: '600' }}>
+                  Resting Bias Normalized
+                </span>
+              )}
+            </div>
+            <p style={{ margin: '2px 0 0', fontSize: '0.78rem', color: colors.textLight }}>
+              {isCalibrating ? `Hold a relaxed, neutral expression... (${calibrationStep}/8 samples)` :
+               isBaselineCalibrated ? 'All expressions normalized against your natural resting face' :
+               'Recommended: Calibrate for 4s with a neutral face to remove natural resting-face bias'}
+            </p>
+          </div>
+        </div>
+
+        {/* Right: Actions */}
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+          {isCalibrating ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div style={{ width: '120px', height: '8px', background: '#ECEFF1', borderRadius: '4px', overflow: 'hidden' }}>
+                <div style={{ width: `${calibrationProgress * 100}%`, height: '100%', background: colors.warning, transition: 'width 0.3s' }} />
+              </div>
+              <span style={{ fontSize: '0.8rem', color: colors.warning, fontWeight: '600' }}>
+                {Math.round(calibrationProgress * 100)}%
+              </span>
+            </div>
+          ) : !isBaselineCalibrated ? (
+            <button
+              onClick={startCalibration}
+              style={{
+                padding: '8px 16px',
+                background: colors.lightBg,
+                color: colors.primary,
+                border: `1.5px solid ${colors.primary}`,
+                borderRadius: '8px',
+                fontSize: '0.85rem',
+                fontWeight: '600',
+                cursor: 'pointer'
+              }}
+            >
+              🎯 Calibrate Neutral Face (4s)
+            </button>
+          ) : (
+            <button
+              onClick={clearBaseline}
+              style={{
+                padding: '6px 12px',
+                background: '#F5F5F5',
+                color: colors.textLight,
+                border: '1px solid #CFD8DC',
+                borderRadius: '6px',
+                fontSize: '0.8rem',
+                fontWeight: '500',
+                cursor: 'pointer'
+              }}
+            >
+              Reset Baseline
+            </button>
+          )}
+
+          {/* Timed Assessment Trigger */}
+          <button
+            onClick={startTimedAssessment}
+            disabled={assessmentActive || isCalibrating}
+            style={{
+              padding: '8px 16px',
+              background: assessmentActive ? colors.warning : `linear-gradient(135deg, ${colors.primary} 0%, ${colors.primaryDark} 100%)`,
+              color: 'white',
+              border: 'none',
+              borderRadius: '8px',
+              fontSize: '0.85rem',
+              fontWeight: '600',
+              cursor: assessmentActive ? 'default' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+          >
+            {assessmentActive ? `⏱️ Screening: ${assessmentTimeLeft}s` : '⏱️ 30s Timed Screening'}
+          </button>
         </div>
       </div>
 
@@ -238,7 +463,7 @@ export default function Home() {
         maxWidth: '1500px',
         margin: '0 auto',
         display: 'grid',
-        gridTemplateColumns: '320px 1fr 420px',
+        gridTemplateColumns: '320px 1fr 450px',
         gap: '25px',
         alignItems: 'start'
       }}>
@@ -278,14 +503,14 @@ export default function Home() {
               />
               <InstructionItem
                 icon={<svg width="18" height="18" viewBox="0 0 24 24" fill={colors.primary}><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm3.5-9c.83 0 1.5-.67 1.5-1.5S16.33 8 15.5 8 14 8.67 14 9.5s.67 1.5 1.5 1.5zm-7 0c.83 0 1.5-.67 1.5-1.5S9.33 8 8.5 8 7 8.67 7 9.5 7.67 11 8.5 11zm3.5 6.5c2.33 0 4.31-1.46 5.11-3.5H6.89c.8 2.04 2.78 3.5 5.11 3.5z"/></svg>}
-                title="Stay Relaxed"
-                subtitle="Relax and maintain a natural expression"
+                title="Baseline Normalization"
+                subtitle="Calibrate neutral face before running temporal checks"
                 color={colors.primary}
               />
             </div>
           </div>
 
-          {/* Depression Info Card */}
+          {/* Temporal Indicators Card */}
           <div style={{
             background: colors.accentLight,
             borderRadius: '16px',
@@ -293,13 +518,14 @@ export default function Home() {
             borderLeft: `4px solid ${colors.accent}`
           }}>
             <h4 style={{ margin: '0 0 12px', fontSize: '0.85rem', color: colors.accent, fontWeight: '700' }}>
-              Depression Indicators
+              Temporal Affective Biomarkers
             </h4>
             <ul style={{ margin: 0, padding: '0 0 0 18px', fontSize: '0.8rem', color: '#5D4037', lineHeight: '1.8' }}>
-              <li><strong>AU04</strong> - Brow Lowerer (Worry/Tension)</li>
-              <li><strong>AU15</strong> - Lip Corner Depressor (Sadness)</li>
-              <li><strong>Low AU12</strong> - Reduced Smiling</li>
-              <li><strong>Negative Pitch</strong> - Head Downward Tilt</li>
+              <li><strong>AU04 Persistence</strong> - Chronic brow furrowing (worry/tension)</li>
+              <li><strong>AU15 Persistence</strong> - Lip corner depressor holding (sadness)</li>
+              <li><strong>Flat Affect Index</strong> - Blunted expressive variance over time</li>
+              <li><strong>Head-Down Dwell</strong> - Prolonged downward pitch posture</li>
+              <li><strong>Smile Deficit</strong> - Low peak &amp; low dynamic smile range</li>
             </ul>
           </div>
         </div>
@@ -319,7 +545,8 @@ export default function Home() {
                 alignItems: 'center',
                 gap: '8px',
                 padding: '8px 18px',
-                background: scanStatus === 'success' ? '#E8F5E9' :
+                background: isCalibrating ? '#FFF8E1' :
+                           scanStatus === 'success' ? '#E8F5E9' :
                            scanStatus === 'scanning' ? '#FFF8E1' :
                            scanStatus === 'no-face' ? colors.accentLight : colors.lightBg,
                 borderRadius: '25px'
@@ -328,20 +555,24 @@ export default function Home() {
                   width: '10px',
                   height: '10px',
                   borderRadius: '50%',
-                  background: scanStatus === 'success' ? colors.success :
+                  background: isCalibrating ? colors.warning :
+                             scanStatus === 'success' ? colors.success :
                              scanStatus === 'scanning' ? colors.warning :
                              scanStatus === 'no-face' ? colors.accent : colors.primary,
-                  animation: scanStatus === 'scanning' ? 'pulse 1s infinite' : 'none'
+                  animation: (scanStatus === 'scanning' || isCalibrating) ? 'pulse 1s infinite' : 'none'
                 }} />
                 <span style={{
                   fontSize: '0.85rem',
                   fontWeight: '500',
-                  color: scanStatus === 'success' ? colors.success :
+                  color: isCalibrating ? colors.warning :
+                         scanStatus === 'success' ? colors.success :
                          scanStatus === 'scanning' ? colors.warning :
                          scanStatus === 'no-face' ? colors.accent : colors.primary
                 }}>
-                  {scanStatus === 'success' ? 'Face Detected' :
-                   scanStatus === 'scanning' ? 'Scanning...' :
+                  {isCalibrating ? `Calibrating Neutral Resting Face (${calibrationStep}/8)...` :
+                   assessmentActive ? `Assessment Active (${assessmentTimeLeft}s remaining)` :
+                   scanStatus === 'success' ? 'Face Detected & Tracking' :
+                   scanStatus === 'scanning' ? 'Scanning Expression Dynamics...' :
                    scanStatus === 'no-face' ? 'No Face Detected' :
                    'Ready to Scan'}
                 </span>
@@ -386,10 +617,11 @@ export default function Home() {
                     rx="110"
                     ry="145"
                     fill="none"
-                    stroke={scanStatus === 'success' ? colors.success :
+                    stroke={isCalibrating ? colors.warning :
+                           scanStatus === 'success' ? colors.success :
                            scanStatus === 'scanning' ? colors.warning : colors.primary}
                     strokeWidth="3"
-                    strokeDasharray={scanStatus === 'scanning' ? '10,5' : 'none'}
+                    strokeDasharray={(scanStatus === 'scanning' || isCalibrating) ? '10,5' : 'none'}
                   />
                   <path d="M 30 70 L 30 30 L 70 30" fill="none" stroke={colors.accent} strokeWidth="4" strokeLinecap="round"/>
                   <path d="M 230 70 L 230 30 L 190 30" fill="none" stroke={colors.accent} strokeWidth="4" strokeLinecap="round"/>
@@ -397,6 +629,25 @@ export default function Home() {
                   <path d="M 230 250 L 230 290 L 190 290" fill="none" stroke={colors.accent} strokeWidth="4" strokeLinecap="round"/>
                 </svg>
               </div>
+
+              {/* Calibration Overlay Banner */}
+              {isCalibrating && (
+                <div style={{
+                  position: 'absolute',
+                  top: '16px',
+                  left: '16px',
+                  right: '16px',
+                  background: 'rgba(0, 0, 0, 0.75)',
+                  backdropFilter: 'blur(4px)',
+                  borderRadius: '10px',
+                  padding: '12px 16px',
+                  color: 'white',
+                  textAlign: 'center',
+                  fontSize: '0.85rem'
+                }}>
+                  Please relax facial muscles and look straight into camera
+                </div>
+              )}
 
               {/* Camera Off State */}
               {!isStreaming && (
@@ -415,7 +666,6 @@ export default function Home() {
                   <p style={{ color: '#BDC3C7', fontSize: '1rem', margin: 0 }}>Click Start Camera to begin</p>
                 </div>
               )}
-
             </div>
 
             <canvas ref={canvasRef} style={{ display: 'none' }} />
@@ -444,7 +694,7 @@ export default function Home() {
                 <>
                   <button
                     onClick={captureAndAnalyze}
-                    disabled={isAnalyzing}
+                    disabled={isAnalyzing || isCalibrating}
                     style={{
                       flex: 1,
                       padding: '14px 20px',
@@ -454,13 +704,17 @@ export default function Home() {
                       borderRadius: '10px',
                       fontSize: '1rem',
                       fontWeight: '600',
-                      cursor: isAnalyzing ? 'not-allowed' : 'pointer'
+                      cursor: (isAnalyzing || isCalibrating) ? 'not-allowed' : 'pointer'
                     }}
                   >
                     {isAnalyzing ? 'Analyzing...' : 'Scan Now'}
                   </button>
                   <button
-                    onClick={() => setIsAutoCapture(!isAutoCapture)}
+                    onClick={() => {
+                      if (assessmentActive) setAssessmentActive(false);
+                      setIsAutoCapture(!isAutoCapture);
+                    }}
+                    disabled={isCalibrating}
                     style={{
                       padding: '14px 18px',
                       background: isAutoCapture ? colors.warning : '#ECEFF1',
@@ -469,10 +723,26 @@ export default function Home() {
                       borderRadius: '10px',
                       fontSize: '0.95rem',
                       fontWeight: '600',
+                      cursor: isCalibrating ? 'not-allowed' : 'pointer'
+                    }}
+                  >
+                    {isAutoCapture ? 'Pause Auto' : 'Auto Monitor'}
+                  </button>
+                  <button
+                    onClick={resetTemporal}
+                    title="Reset Temporal Window Buffer"
+                    style={{
+                      padding: '14px 14px',
+                      background: '#ECEFF1',
+                      color: colors.textLight,
+                      border: 'none',
+                      borderRadius: '10px',
+                      fontSize: '0.9rem',
+                      fontWeight: '600',
                       cursor: 'pointer'
                     }}
                   >
-                    {isAutoCapture ? 'Stop' : 'Auto'}
+                    ↺ Reset
                   </button>
                   <button
                     onClick={stopCamera}
@@ -508,18 +778,18 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Right Side - Analysis Results */}
+        {/* Right Side - Analysis & Temporal Biomarkers Results */}
         <div style={{
           background: 'white',
           borderRadius: '20px',
           padding: '24px',
           boxShadow: '0 8px 30px rgba(0,0,0,0.08)',
-          maxHeight: 'calc(100vh - 160px)',
+          maxHeight: 'calc(100vh - 120px)',
           overflowY: 'auto',
           borderTop: `4px solid ${colors.accent}`
         }}>
           <h2 style={{
-            margin: '0 0 20px',
+            margin: '0 0 16px',
             fontSize: '1.1rem',
             color: colors.primary,
             fontWeight: '700',
@@ -530,7 +800,7 @@ export default function Home() {
             <svg width="22" height="22" viewBox="0 0 24 24" fill={colors.primary}>
               <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/>
             </svg>
-            Analysis Results
+            Clinical Affect Analysis
           </h2>
 
           {!result?.success || !result.data ? (
@@ -538,53 +808,145 @@ export default function Home() {
               <svg width="60" height="60" viewBox="0 0 24 24" fill="#E0E0E0" style={{ marginBottom: '15px' }}>
                 <path d="M9 11.75c-.69 0-1.25.56-1.25 1.25s.56 1.25 1.25 1.25 1.25-.56 1.25-1.25-.56-1.25-1.25-1.25zm6 0c-.69 0-1.25.56-1.25 1.25s.56 1.25 1.25 1.25 1.25-.56 1.25-1.25-.56-1.25-1.25-1.25zM12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/>
               </svg>
-              <p style={{ margin: 0, fontSize: '0.95rem' }}>Scan face to see results</p>
-              <p style={{ margin: '5px 0 0', fontSize: '0.85rem' }}>Position your face and capture to analyze</p>
+              <p style={{ margin: 0, fontSize: '0.95rem' }}>Scan face or start auto monitor to see results</p>
+              <p style={{ margin: '5px 0 0', fontSize: '0.85rem' }}>Temporal aggregation activates over continuous observation</p>
             </div>
           ) : (
             <>
-              {/* Depression Risk Score */}
-              {depressionRisk && (
+              {/* Phase 1: Temporal Aggregation Depression Risk Card */}
+              {temporal && (
                 <div style={{
-                  background: depressionRisk.score > 50 ? colors.accentLight : colors.lightBg,
-                  borderRadius: '12px',
-                  padding: '16px',
+                  background: temporal.smoothed_score > 50 ? colors.accentLight : colors.lightBg,
+                  borderRadius: '14px',
+                  padding: '18px',
                   marginBottom: '20px',
-                  borderLeft: `4px solid ${depressionRisk.score > 50 ? colors.accent : colors.primary}`
+                  borderLeft: `5px solid ${temporal.smoothed_score > 50 ? colors.accent : temporal.smoothed_score > 30 ? colors.warning : colors.primary}`
                 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                    <span style={{ fontSize: '0.9rem', fontWeight: '600', color: depressionRisk.score > 50 ? colors.accent : colors.primary }}>
-                      Depression Risk Score
-                    </span>
-                    <span style={{
-                      fontSize: '1.5rem',
-                      fontWeight: '700',
-                      color: depressionRisk.score > 50 ? colors.accent : colors.primary
-                    }}>
-                      {depressionRisk.score}%
-                    </span>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+                    <div>
+                      <span style={{
+                        fontSize: '0.9rem',
+                        fontWeight: '700',
+                        color: temporal.smoothed_score > 50 ? colors.accent : colors.primary
+                      }}>
+                        Temporal Depression Biomarker Risk
+                      </span>
+                      <div style={{ fontSize: '0.75rem', color: colors.textLight, marginTop: '2px' }}>
+                        Window: {temporal.frames_count} frames {temporal.baseline_active ? '• Baseline Normalized' : '• Raw Morphology'}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <span style={{
+                        fontSize: '1.6rem',
+                        fontWeight: '800',
+                        color: temporal.smoothed_score > 50 ? colors.accent : temporal.smoothed_score > 30 ? colors.warning : colors.primary
+                      }}>
+                        {temporal.smoothed_score}%
+                      </span>
+                      <div style={{ fontSize: '0.7rem', fontWeight: '600', color: temporal.smoothed_score > 50 ? colors.accent : colors.primary }}>
+                        {temporal.smoothed_score > 55 ? 'Elevated Clinical Risk' : temporal.smoothed_score > 30 ? 'Moderate Concern' : 'Low / Minimal Risk'}
+                      </div>
+                    </div>
                   </div>
-                  <div style={{
-                    height: '8px',
-                    background: '#E0E0E0',
-                    borderRadius: '4px',
-                    overflow: 'hidden'
-                  }}>
+
+                  {/* Progress bar */}
+                  <div style={{ height: '8px', background: '#E0E0E0', borderRadius: '4px', overflow: 'hidden', margin: '10px 0' }}>
                     <div style={{
-                      width: `${depressionRisk.score}%`,
+                      width: `${temporal.smoothed_score}%`,
                       height: '100%',
-                      background: depressionRisk.score > 50
+                      background: temporal.smoothed_score > 50
                         ? `linear-gradient(90deg, ${colors.warning}, ${colors.accent})`
                         : `linear-gradient(90deg, ${colors.success}, ${colors.primary})`,
                       borderRadius: '4px',
-                      transition: 'width 0.5s ease'
+                      transition: 'width 0.4s ease'
                     }} />
                   </div>
-                  {depressionRisk.factors.length > 0 && (
-                    <div style={{ marginTop: '10px', fontSize: '0.8rem', color: '#5D4037' }}>
-                      <strong>Factors:</strong> {depressionRisk.factors.join(', ')}
+
+                  {/* Affect Flatness / Immobility Index */}
+                  <div style={{ marginTop: '12px', padding: '10px', background: 'white', borderRadius: '8px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', fontWeight: '600', color: colors.text }}>
+                      <span>Affect Flatness / Immobility Index:</span>
+                      <span style={{ color: temporal.metrics.affect_flatness_index > 0.7 ? colors.accent : colors.primary }}>
+                        {temporal.metrics.affect_flatness_index.toFixed(2)} / 1.00
+                      </span>
+                    </div>
+                    <div style={{ height: '5px', background: '#ECEFF1', borderRadius: '3px', marginTop: '6px', overflow: 'hidden' }}>
+                      <div style={{
+                        width: `${temporal.metrics.affect_flatness_index * 100}%`,
+                        height: '100%',
+                        background: temporal.metrics.affect_flatness_index > 0.7 ? colors.accent : colors.primary
+                      }} />
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: colors.textLight, marginTop: '3px' }}>
+                      <span>Dynamic Affect</span>
+                      <span>Blunted / Rigid Affect</span>
+                    </div>
+                  </div>
+
+                  {/* Key Temporal Dwell Breakdowns */}
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 1fr',
+                    gap: '8px',
+                    marginTop: '10px'
+                  }}>
+                    <div style={{ background: 'white', padding: '8px 10px', borderRadius: '8px', fontSize: '0.75rem' }}>
+                      <div style={{ color: colors.textLight }}>Brow Tension Dwell</div>
+                      <div style={{ fontWeight: '700', color: colors.text, fontSize: '0.9rem' }}>{temporal.metrics.au04_dwell_pct}%</div>
+                    </div>
+                    <div style={{ background: 'white', padding: '8px 10px', borderRadius: '8px', fontSize: '0.75rem' }}>
+                      <div style={{ color: colors.textLight }}>Lip Depression Dwell</div>
+                      <div style={{ fontWeight: '700', color: colors.text, fontSize: '0.9rem' }}>{temporal.metrics.au15_dwell_pct}%</div>
+                    </div>
+                    <div style={{ background: 'white', padding: '8px 10px', borderRadius: '8px', fontSize: '0.75rem' }}>
+                      <div style={{ color: colors.textLight }}>Head Down Dwell</div>
+                      <div style={{ fontWeight: '700', color: colors.text, fontSize: '0.9rem' }}>{temporal.metrics.head_down_pct}%</div>
+                    </div>
+                    <div style={{ background: 'white', padding: '8px 10px', borderRadius: '8px', fontSize: '0.75rem' }}>
+                      <div style={{ color: colors.textLight }}>Peak Smile Response</div>
+                      <div style={{ fontWeight: '700', color: colors.text, fontSize: '0.9rem' }}>{(temporal.metrics.smile_max * 100).toFixed(0)}%</div>
+                    </div>
+                  </div>
+
+                  {/* Temporal Contributing Factors */}
+                  {temporal.factors.length > 0 && (
+                    <div style={{ marginTop: '12px', fontSize: '0.78rem', color: '#5D4037', lineHeight: '1.5' }}>
+                      <strong>Temporal Findings:</strong>
+                      <ul style={{ margin: '4px 0 0', paddingLeft: '16px' }}>
+                        {temporal.factors.map((f, i) => <li key={i}>{f}</li>)}
+                      </ul>
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* Phase 1: Real-Time Expression Timeline Sparkline Chart */}
+              {temporal && temporal.timeline && temporal.timeline.length > 1 && (
+                <div style={{
+                  background: '#FAFAFA',
+                  border: '1px solid #ECEFF1',
+                  borderRadius: '12px',
+                  padding: '14px',
+                  marginBottom: '20px'
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <span style={{ fontSize: '0.82rem', fontWeight: '700', color: colors.text }}>
+                      Expression Dynamics Trajectory
+                    </span>
+                    <span style={{ fontSize: '0.7rem', color: colors.textLight }}>
+                      Last {temporal.timeline.length} updates
+                    </span>
+                  </div>
+
+                  <ExpressionTimelineChart timeline={temporal.timeline} />
+
+                  {/* Legend */}
+                  <div style={{ display: 'flex', justifyContent: 'center', gap: '12px', marginTop: '8px', flexWrap: 'wrap' }}>
+                    <LegendItem color="#FB8C00" label="AU04 Brow Furrow" />
+                    <LegendItem color="#E53935" label="AU15 Lip Depressor" />
+                    <LegendItem color="#43A047" label="Smile" />
+                    <LegendItem color="#1E88E5" label="Pitch (Down)" />
+                  </div>
                 </div>
               )}
 
@@ -611,7 +973,7 @@ export default function Home() {
 
               {/* Action Units Section */}
               {result.data.action_units && (
-                <ResultSection title="Action Units" color={colors.primary} subtitle="Depression Indicators">
+                <ResultSection title="Action Units" color={colors.primary} subtitle="Clinical Indicators">
                   {Object.entries(result.data.action_units).map(([name, value]) => {
                     const auNumber = name.split(' - ')[0];
                     const auDesc = name.split(' - ')[1] || '';
@@ -652,7 +1014,7 @@ export default function Home() {
         </div>
       </div>
 
-      {/* API Status */}
+      {/* API Status Floating Pill */}
       <div style={{
         position: 'fixed',
         bottom: '20px',
@@ -693,6 +1055,64 @@ export default function Home() {
           border-radius: 3px;
         }
       `}</style>
+    </div>
+  );
+}
+
+// Sparkline Timeline SVG Component
+function ExpressionTimelineChart({ timeline }: { timeline: Array<{ au04: number; au15: number; smile: number; pitch: number }> }) {
+  const width = 380;
+  const height = 90;
+  const padding = 6;
+
+  const pointsCount = timeline.length;
+  if (pointsCount < 2) return null;
+
+  // Function to map index to X
+  const getX = (idx: number) => padding + (idx / (pointsCount - 1)) * (width - 2 * padding);
+
+  // Function to map normalized 0..1 to Y (inverted)
+  const getY = (val: number) => height - padding - Math.min(1, Math.max(0, val)) * (height - 2 * padding);
+
+  // Normalize pitch (-25° to +15° -> 1 to 0 where -25 is 1 high down)
+  const normalizePitch = (pitch: number) => {
+    return Math.min(1, Math.max(0, (-pitch - 5) / 20));
+  };
+
+  const createPath = (getter: (p: typeof timeline[0]) => number) => {
+    return timeline
+      .map((p, i) => `${i === 0 ? 'M' : 'L'} ${getX(i).toFixed(1)} ${getY(getter(p)).toFixed(1)}`)
+      .join(' ');
+  };
+
+  const pathAu04 = createPath(p => p.au04);
+  const pathAu15 = createPath(p => p.au15);
+  const pathSmile = createPath(p => p.smile);
+  const pathPitch = createPath(p => normalizePitch(p.pitch));
+
+  return (
+    <div style={{ width: '100%', overflow: 'hidden' }}>
+      <svg viewBox={`0 0 ${width} ${height}`} style={{ width: '100%', height: `${height}px`, background: '#F8F9FA', borderRadius: '8px' }}>
+        {/* Horizontal gridlines */}
+        <line x1={padding} y1={height * 0.25} x2={width - padding} y2={height * 0.25} stroke="#E0E0E0" strokeDasharray="3 3" />
+        <line x1={padding} y1={height * 0.50} x2={width - padding} y2={height * 0.50} stroke="#E0E0E0" strokeDasharray="3 3" />
+        <line x1={padding} y1={height * 0.75} x2={width - padding} y2={height * 0.75} stroke="#E0E0E0" strokeDasharray="3 3" />
+
+        {/* Traces */}
+        <path d={pathPitch} fill="none" stroke="#1E88E5" strokeWidth="1.8" opacity="0.6" strokeDasharray="4 2" />
+        <path d={pathSmile} fill="none" stroke="#43A047" strokeWidth="2.2" />
+        <path d={pathAu04} fill="none" stroke="#FB8C00" strokeWidth="2.2" />
+        <path d={pathAu15} fill="none" stroke="#E53935" strokeWidth="2.2" />
+      </svg>
+    </div>
+  );
+}
+
+function LegendItem({ color, label }: { color: string; label: string }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+      <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: color }} />
+      <span style={{ fontSize: '0.7rem', color: '#546E7A', fontWeight: '500' }}>{label}</span>
     </div>
   );
 }

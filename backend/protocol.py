@@ -12,6 +12,7 @@ import numpy as np
 from typing import Dict, List, Optional, Any
 from audio import AcousticAnalyzer
 from fusion import MultimodalFusionEngine
+from ml_scoring import MLDepressionScorer
 
 
 PHASE_CONFIG = {
@@ -57,9 +58,10 @@ class ProtocolSessionManager:
         self.phase_frames: Dict[str, List[Dict[str, Any]]] = {p: [] for p in self.phases}
         self.baseline_values: Dict[str, float] = {}
 
-        # Multimodal audio analysis & fusion
+        # Multimodal audio analysis, fusion & ML Scoring
         self.acoustic_analyzer = AcousticAnalyzer(target_sr=16000)
         self.fusion_engine = MultimodalFusionEngine()
+        self.ml_scorer = MLDepressionScorer()
         self.acoustic_report: Optional[Dict[str, Any]] = None
 
     def start_session(self) -> Dict[str, Any]:
@@ -398,6 +400,28 @@ class ProtocolSessionManager:
             if ac_bk.get("vocal_strain_index", 0.0) >= 40.0:
                 findings.append(f"Acoustic vocal perturbation/strain observed during reading passage (Index: {ac_bk.get('vocal_strain_index')}).")
 
+        # Phase 4: Machine Learning Calibration (PHQ-8 / DAIC-WOZ Benchmark Alignment)
+        has_audio = (self.acoustic_report is not None and self.acoustic_report.get("success", False))
+        feature_vector = self.ml_scorer.extract_feature_vector(
+            {
+                "phase_metrics": {
+                    "positive": {"smile_peak": smile_peak, "smile_mean": smile_mean, "smile_latency_sec": smile_latency, "duchenne_pct": duchenne_pct},
+                    "cognitive": {"head_down_pct": head_down_pct, "brow_tension_pct": brow_tension_pct, "psychomotor_speed": psychomotor_speed},
+                    "recovery": {"residual_brow_diff": end_brow_diff, "residual_sadness_diff": end_sadness_diff}
+                },
+                "subscores": {
+                    "anhedonia_score": anhedonia_score,
+                    "recovery_impairment_score": recovery_impairment
+                }
+            },
+            self.acoustic_report
+        )
+        phq8_prediction = self.ml_scorer.predict(feature_vector, has_audio=has_audio)
+
+        # Append PHQ-8 benchmark finding
+        threshold_str = "meets DSM-5 clinical screening threshold (>= 10)" if phq8_prediction["clinical_threshold_met"] else "below DSM-5 clinical threshold (< 10)"
+        findings.append(f"ML Benchmark Calibration (DAIC-WOZ): Predicted PHQ-8 is {phq8_prediction['phq8_score']}/24 ({phq8_prediction['severity_tier']}), {threshold_str}.")
+
         # Aggregate timeline across all phases with phase markers
         full_timeline = []
         for phase_name in self.phases:
@@ -420,6 +444,7 @@ class ProtocolSessionManager:
             "summary": final_summary,
             "clinical_findings": findings,
             "multimodal": fusion_result,
+            "phq8_assessment": phq8_prediction,
             "subscores": {
                 "anhedonia_score": int(round(anhedonia_score)),
                 "cognitive_burden_score": int(round(cognitive_burden_score)),

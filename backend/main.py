@@ -623,6 +623,19 @@ async def cancel_protocol():
     protocol_manager.cancel_session()
     return JSONResponse(content={"success": True, "message": "Protocol cancelled"})
 
+@app.post("/ml/predict")
+async def ml_predict(data: dict):
+    """
+    Phase 4: Predict calibrated PHQ-8 depression score and DSM-5 severity
+    from multimodal feature inputs benchmarked against DAIC-WOZ / AVEC.
+    """
+    try:
+        report = protocol_manager.compute_assessment_report()
+        phq8 = report.get("phq8_assessment")
+        return JSONResponse(content={"success": True, "phq8_assessment": phq8})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 def extract_features(image):
     """Core feature extractor returning landmark, head pose, eye, expression, and AU dicts."""
     global face_landmarker, face_mesh, face_detector

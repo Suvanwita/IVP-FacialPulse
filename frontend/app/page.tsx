@@ -77,6 +77,49 @@ interface MultimodalFusionReport {
   clinical_narrative: string;
 }
 
+interface PHQ8Item {
+  item_number: number;
+  title: string;
+  score: number;
+  max_score: number;
+  biomarkers: string;
+}
+
+interface FeatureContributor {
+  feature: string;
+  importance_weight: number;
+  impact: number;
+}
+
+interface PHQ8Assessment {
+  success: boolean;
+  phq8_score: number;
+  phq8_score_continuous: number;
+  confidence_interval_95: {
+    lower: number;
+    upper: number;
+  };
+  severity_tier: string;
+  severity_code: 'minimal' | 'mild' | 'moderate' | 'moderately_severe' | 'severe';
+  severity_description: string;
+  clinical_threshold_met: boolean;
+  clinical_threshold_cutoff: number;
+  item_breakdown: {
+    item_1_anhedonia: PHQ8Item;
+    item_2_depressed_mood: PHQ8Item;
+    item_4_fatigue_blunting: PHQ8Item;
+    item_7_concentration_tension: PHQ8Item;
+    item_8_psychomotor_retardation: PHQ8Item;
+  };
+  top_contributors: FeatureContributor[];
+  benchmark_reference: {
+    benchmark: string;
+    target_metric: string;
+    algorithm: string;
+    validation_notes: string;
+  };
+}
+
 interface ProtocolReport {
   session_id: string;
   composite_score: number;
@@ -86,6 +129,7 @@ interface ProtocolReport {
   summary: string;
   clinical_findings: string[];
   multimodal?: MultimodalFusionReport;
+  phq8_assessment?: PHQ8Assessment;
   subscores: {
     anhedonia_score: number;
     cognitive_burden_score: number;
@@ -1235,6 +1279,184 @@ export default function Home() {
             </div>
           )}
 
+          {/* Phase 4: Machine Learning Calibration (PHQ-8 / DAIC-WOZ Benchmark Alignment) */}
+          {protocolReportData.phq8_assessment && (
+            <div style={{
+              background: '#FFFFFF',
+              borderRadius: '16px',
+              padding: '22px 24px',
+              border: '2px solid #E3F2FD',
+              boxShadow: '0 4px 20px rgba(21, 101, 192, 0.08)',
+              marginBottom: '24px'
+            }}>
+              {/* Header */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px', flexWrap: 'wrap', gap: '10px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span style={{ fontSize: '1.4rem' }}>🧠</span>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '1.1rem', color: colors.text, fontWeight: '700' }}>
+                      ML Depression Calibration &amp; PHQ-8 Benchmark Assessment
+                    </h3>
+                    <p style={{ margin: '2px 0 0', fontSize: '0.78rem', color: colors.textLight }}>
+                      Trained on DAIC-WOZ &amp; AVEC affective computing benchmarks using Gradient-Boosted ensemble stacking
+                    </p>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{
+                    padding: '4px 12px',
+                    borderRadius: '12px',
+                    fontSize: '0.78rem',
+                    fontWeight: '700',
+                    background: protocolReportData.phq8_assessment.clinical_threshold_met ? '#FFEBEE' : '#E8F5E9',
+                    color: protocolReportData.phq8_assessment.clinical_threshold_met ? colors.accent : colors.success,
+                    border: `1px solid ${protocolReportData.phq8_assessment.clinical_threshold_met ? colors.accent : colors.success}`
+                  }}>
+                    {protocolReportData.phq8_assessment.clinical_threshold_met ? '⚠️ DSM-5 CLINICAL CUTOFF MET (≥10)' : '✓ BELOW CLINICAL THRESHOLD (<10)'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Top Row: Dial / Score & DSM-5 Scale Gauge */}
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: '320px 1fr',
+                gap: '20px',
+                background: '#F8FAFC',
+                padding: '18px 20px',
+                borderRadius: '12px',
+                marginBottom: '20px',
+                alignItems: 'center'
+              }}>
+                {/* Score Dial */}
+                <div style={{ borderRight: '1px solid #E2E8F0', paddingRight: '20px' }}>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+                    <span style={{
+                      fontSize: '2.8rem',
+                      fontWeight: '800',
+                      color: protocolReportData.phq8_assessment.phq8_score >= 15 ? colors.accent :
+                             protocolReportData.phq8_assessment.phq8_score >= 10 ? colors.warning :
+                             protocolReportData.phq8_assessment.phq8_score >= 5 ? '#FBC02D' : colors.success
+                    }}>
+                      {protocolReportData.phq8_assessment.phq8_score}
+                    </span>
+                    <span style={{ fontSize: '1.2rem', color: colors.textLight, fontWeight: '600' }}>/ 24</span>
+                    <span style={{
+                      marginLeft: 'auto',
+                      padding: '3px 10px',
+                      borderRadius: '8px',
+                      fontSize: '0.8rem',
+                      fontWeight: '700',
+                      background: protocolReportData.phq8_assessment.phq8_score >= 15 ? colors.accentLight :
+                                 protocolReportData.phq8_assessment.phq8_score >= 10 ? '#FFF8E1' : '#E8F5E9',
+                      color: protocolReportData.phq8_assessment.phq8_score >= 15 ? colors.accent :
+                             protocolReportData.phq8_assessment.phq8_score >= 10 ? colors.warning : colors.success
+                    }}>
+                      {protocolReportData.phq8_assessment.severity_tier}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '0.8rem', color: colors.textLight, marginTop: '4px' }}>
+                    Continuous: {protocolReportData.phq8_assessment.phq8_score_continuous} • 95% CI: [{protocolReportData.phq8_assessment.confidence_interval_95.lower}, {protocolReportData.phq8_assessment.confidence_interval_95.upper}]
+                  </div>
+                  <p style={{ margin: '6px 0 0', fontSize: '0.78rem', color: '#475569', lineHeight: '1.4' }}>
+                    {protocolReportData.phq8_assessment.severity_description}
+                  </p>
+                </div>
+
+                {/* DSM-5 Horizontal Severity Spectrum */}
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', fontWeight: '600', color: colors.textLight, marginBottom: '6px' }}>
+                    <span>Minimal (0-4)</span>
+                    <span>Mild (5-9)</span>
+                    <span style={{ color: colors.warning, fontWeight: '700' }}>Moderate (10-14) ★ Cutoff</span>
+                    <span>Mod. Severe (15-19)</span>
+                    <span>Severe (20-24)</span>
+                  </div>
+
+                  {/* Gradient Spectrum Bar with Pointer */}
+                  <div style={{ position: 'relative', height: '14px', borderRadius: '7px', background: 'linear-gradient(90deg, #4CAF50 0%, #8BC34A 20%, #FFC107 41%, #FF9800 62%, #F44336 83%, #B71C1C 100%)', marginBottom: '8px' }}>
+                    {/* Clinical Cutoff Marker (at 10 / 24 = 41.6%) */}
+                    <div style={{
+                      position: 'absolute',
+                      left: '41.6%',
+                      top: '-4px',
+                      bottom: '-4px',
+                      width: '2px',
+                      background: '#1A237E',
+                      zIndex: 2
+                    }} />
+
+                    {/* Patient Score Indicator */}
+                    <div style={{
+                      position: 'absolute',
+                      left: `${Math.min(98, Math.max(2, (protocolReportData.phq8_assessment.phq8_score_continuous / 24) * 100))}%`,
+                      top: '50%',
+                      transform: 'translate(-50%, -50%)',
+                      width: '18px',
+                      height: '18px',
+                      borderRadius: '50%',
+                      background: 'white',
+                      border: '3px solid #1A237E',
+                      boxShadow: '0 2px 6px rgba(0,0,0,0.3)',
+                      zIndex: 3
+                    }} />
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: '#64748B' }}>
+                    <span>0</span>
+                    <span>5</span>
+                    <span style={{ fontWeight: '700', color: colors.primary }}>10 (DSM-5 Cutoff)</span>
+                    <span>15</span>
+                    <span>20</span>
+                    <span>24</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Item-Level Clinical Symptom Mapping */}
+              <div style={{ marginBottom: '18px' }}>
+                <h4 style={{ margin: '0 0 10px', fontSize: '0.88rem', color: colors.text, fontWeight: '700' }}>
+                  Item-Level DSM-5 Diagnostic Mapping (Observable Physical Criteria):
+                </h4>
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(5, 1fr)',
+                  gap: '12px'
+                }}>
+                  <PHQ8ItemCard item={protocolReportData.phq8_assessment.item_breakdown.item_1_anhedonia} colors={colors} />
+                  <PHQ8ItemCard item={protocolReportData.phq8_assessment.item_breakdown.item_2_depressed_mood} colors={colors} />
+                  <PHQ8ItemCard item={protocolReportData.phq8_assessment.item_breakdown.item_4_fatigue_blunting} colors={colors} />
+                  <PHQ8ItemCard item={protocolReportData.phq8_assessment.item_breakdown.item_7_concentration_tension} colors={colors} />
+                  <PHQ8ItemCard item={protocolReportData.phq8_assessment.item_breakdown.item_8_psychomotor_retardation} colors={colors} />
+                </div>
+              </div>
+
+              {/* Explainable Top Contributing Features */}
+              {protocolReportData.phq8_assessment.top_contributors && protocolReportData.phq8_assessment.top_contributors.length > 0 && (
+                <div style={{ background: '#F8FAFC', padding: '12px 16px', borderRadius: '10px' }}>
+                  <div style={{ fontSize: '0.8rem', fontWeight: '700', color: colors.text, marginBottom: '8px' }}>
+                    Key Biomarker Attributions (Top Contributors to Machine Learning Prediction):
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                    {protocolReportData.phq8_assessment.top_contributors.map((c, cIdx) => (
+                      <span key={cIdx} style={{
+                        fontSize: '0.75rem',
+                        padding: '4px 10px',
+                        borderRadius: '6px',
+                        background: c.impact >= 0 ? '#FEE2E2' : '#DCFCE7',
+                        color: c.impact >= 0 ? '#991B1B' : '#166534',
+                        fontWeight: '600'
+                      }}>
+                        {c.feature.replace(/_/g, ' ')}: {c.impact >= 0 ? `+${c.impact}` : c.impact}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Clinical Findings Summary */}
           <div style={{ background: '#F8F9FA', padding: '16px 20px', borderRadius: '12px', marginBottom: '24px' }}>
             <h4 style={{ margin: '0 0 8px', fontSize: '0.9rem', color: colors.text, fontWeight: '700' }}>
@@ -1996,6 +2218,57 @@ function ResultBar({
           borderRadius: '3px',
           transition: 'width 0.3s ease'
         }} />
+      </div>
+    </div>
+  );
+}
+
+function PHQ8ItemCard({ item, colors }: { item: PHQ8Item; colors: any }) {
+  const labels = ["Not at all (0)", "Several days (+1)", "More than half (+2)", "Nearly every day (+3)"];
+  const itemColors = [colors.success, "#FBC02D", colors.warning, colors.accent];
+
+  return (
+    <div style={{
+      background: 'white',
+      borderRadius: '10px',
+      padding: '14px',
+      border: '1px solid #E0E0E0',
+      display: 'flex',
+      flexDirection: 'column',
+      justifyContent: 'space-between',
+      boxShadow: '0 2px 8px rgba(0,0,0,0.03)'
+    }}>
+      <div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '6px' }}>
+          <span style={{ fontSize: '0.75rem', fontWeight: '700', color: colors.textLight }}>
+            ITEM {item.item_number}
+          </span>
+          <span style={{
+            fontSize: '0.85rem',
+            fontWeight: '800',
+            color: itemColors[item.score] || colors.text,
+            background: `${itemColors[item.score]}18`,
+            padding: '2px 8px',
+            borderRadius: '6px'
+          }}>
+            {item.score} / {item.max_score}
+          </span>
+        </div>
+        <div style={{ fontSize: '0.85rem', fontWeight: '700', color: colors.text, marginBottom: '4px' }}>
+          {item.title}
+        </div>
+        <div style={{ fontSize: '0.75rem', color: '#607D8B', fontStyle: 'italic', marginBottom: '8px' }}>
+          {labels[item.score]}
+        </div>
+      </div>
+      <div style={{
+        fontSize: '0.72rem',
+        color: '#455A64',
+        background: '#ECEFF1',
+        padding: '6px 8px',
+        borderRadius: '6px'
+      }}>
+        {item.biomarkers}
       </div>
     </div>
   );

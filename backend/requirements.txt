@@ -1,0 +1,9 @@
+fastapi>=0.104.1
+uvicorn>=0.24.0
+python-multipart>=0.0.6
+opencv-python>=4.8.0,<5.0.0
+numpy>=1.26.0
+mediapipe>=0.10.14
+ai-edge-litert>=2.0.0; python_version >= "3.12"
+tflite-runtime>=2.14.0; python_version < "3.12"
+Pillow>=10.1.0

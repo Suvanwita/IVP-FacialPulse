@@ -1,0 +1,82 @@
+# Dependencies (can be installed during setup)
+node_modules/
+frontend/node_modules/
+backend/venv/
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Downloaded ML Models & Assets (installed/downloaded during setup)
+models/face_landmarker.task
+models/*.task
+*.task
+
+# Next.js Build & Cache
+.next/
+frontend/.next/
+out/
+frontend/out/
+build/
+dist/
+*.tsbuildinfo
+.eslintcache
+
+# Python Cache & Bytecode
+__pycache__/
+backend/__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+develop-eggs/
+downloads/
+eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+.installed.cfg
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Environment & Secrets
+.env
+.env.local
+.env.*.local
+backend/.env
+frontend/.env*.local
+
+# IDE & Editor Configs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.claude/
+.antigravity/
+
+# Operating System Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*

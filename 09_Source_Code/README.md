@@ -2,7 +2,7 @@
 
 **Clinical Multimodal Affect Analysis & Stimulus-Response Depression Screening Platform**
 
-FacialPulse is an AI-powered clinical screening system designed for desktop psychiatric assessments. It combines facial Action Unit temporal dynamics (FACS), acoustic speech prosody, and machine learning calibrated against the DAIC-WOZ / AVEC benchmark to provide standardized DSM-5 depressive symptom indicators (PHQ-8: 0–24) and longitudinal therapeutic trajectory tracking.
+FacialPulse is an AI-powered clinical screening system designed for psychiatric assessments. It combines facial Action Unit temporal dynamics (FACS), acoustic speech prosody, and machine learning calibrated against the DAIC-WOZ / AVEC benchmark to provide standardized DSM-5 depressive symptom indicators (PHQ-8: 0–24) and longitudinal therapeutic trajectory tracking.
 
 ---
 

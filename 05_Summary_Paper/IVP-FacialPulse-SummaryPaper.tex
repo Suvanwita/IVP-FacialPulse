@@ -1,0 +1,160 @@
+\documentclass[conference, 12pt]{IEEEtran}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{cite}
+\usepackage{balance}
+\usepackage{enumitem}
+\usepackage{url}
+\usepackage[hidelinks]{hyperref} % Loaded last to prevent citation/URL conflicts
+
+\begin{document}
+
+\title{FacialPulse: A Multimodal Affective Screening Framework for Depression-Related Behavioral Assessment}
+
+\author{
+\IEEEauthorblockN{
+\begin{tabular}{c}
+\textbf{Group 9} \\[4pt]
+Suvanwita Das (IIT2024013) \\
+Milan Chopda (IIT2024053) \\
+Anshkumar (IIT2023055) \\
+Chandan Kumar Das (IIT2023070) \\
+Prince Kumar (IIT2024085) \\
+Sayan Biswas (IIT2024090) \\
+Panara Bhavya (IIT2024097) \\
+\end{tabular}
+}
+\IEEEauthorblockA{
+\begin{tabular}{c}
+\\[-4pt]
+Department of Information Technology \\
+GitHub Repository: https://github.com/Suvanwita/IVP-FacialPulse
+\end{tabular}
+}
+}
+
+
+
+
+\maketitle
+
+\begin{abstract}
+Depression screening remains a major challenge in clinical and low-resource settings, where symptom assessment often depends on self-reporting and clinician observation. This paper presents FacialPulse, a multimodal software framework for depression-related behavioral assessment based on facial dynamics, speech prosody, and guided affective tasks. The proposed system combines computer vision, temporal signal analysis, acoustic processing, and a multi-stage screening protocol to generate interpretable severity indicators. The architecture includes a web-based front end, a backend analysis pipeline, temporal baseline calibration, multimodal fusion, and session-level longitudinal tracking. The platform is designed as an investigational screening prototype rather than a diagnostic device. The work emphasizes behavioral markers such as affective blunting, psychomotor retardation, reduced smiling response, and reduced vocal expressivity. This paper summarizes the project problem statement, solution design, system architecture, and methodological considerations in a formal academic format.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Depression screening, affective computing, multimodal analysis, facial expression recognition, speech prosody, behavioral biomarkers, PHQ-8-inspired scoring, mental health informatics.
+\end{IEEEkeywords}
+
+\section{Introduction}
+Depression is one of the most prevalent mental health disorders worldwide and remains difficult to detect reliably at early stages. Traditional screening approaches rely heavily on self-reporting tools, clinician interviews, and retrospective symptom recall. While these instruments are important, they may not consistently capture subtle but clinically meaningful behavioral changes such as reduced positive affect, psychomotor slowing, facial blunting, or flattened speech prosody \cite{ref1, ref2}. There is therefore substantial interest in computational systems that infer depressive symptom indicators from observable behavior. Recent advances in computer vision, speech signal processing, and affective computing have enabled the analysis of behavioral cues in low-cost, scalable, and non-invasive environments \cite{ref3, ref5}. 
+
+In this context, FacialPulse is proposed as a multimodal prototype for structured depression-related screening. It integrates webcam-based facial analysis, voice analysis, temporal feature aggregation, and a guided interview-like protocol to estimate behavioral signals associated with depressive symptom severity. Rather than providing a final diagnostic decision, the system is designed to generate a risk-oriented screening assessment with an explainable feature summary. The system architecture is modular and incorporates four major components: (1) structured behavioral elicitation, (2) facial and speech feature extraction, (3) multimodal fusion and scoring, and (4) longitudinal tracking with privacy-oriented data handling. The overall goal is to create a practical research prototype that can support early screening, monitoring, and hypothesis generation in clinical and experimental settings.
+
+\section{Problem Statement}
+The core problem addressed by FacialPulse is the limited availability of scalable, objective, and multimodal tools for depression-related behavioral assessment. Existing screening instruments provide valuable information, but they often fail to capture real-time behavioral deviations across temporal contexts. Emotional expression and speech are dynamic processes, and a single static measurement is not sufficient to describe symptom presentation. Several technical and clinical challenges motivate the project:
+\begin{itemize}[leftmargin=1.5em]
+    \item \textbf{Baseline variability:} Facial expressions differ significantly across individuals; therefore, neutral or resting-state calibration is essential.
+    \item \textbf{Temporal dynamics:} Depressive symptoms often emerge as a shift in behavior over time rather than a single snapshot.
+    \item \textbf{Multimodal complementarity:} Facial and vocal signals can carry different, but complementary, information about affective state \cite{ref5}.
+    \item \textbf{Real-world robustness:} Screening systems must handle incomplete data, issues with camera quality, and absent or noisy audio.
+    \item \textbf{Privacy and governance:} Face and voice data are highly sensitive and require privacy-conscious processing and storage practices.
+\end{itemize}
+FacialPulse addresses these issues by combining a guided interaction protocol with behavioral features extracted from both video and audio streams. The resulting system is intended for research and screening support, not autonomous clinical diagnosis.
+
+\section{Proposed Solution}
+FacialPulse implements a structured screening workflow composed of a four-phase protocol: baseline rest, positive-affect elicitation, cognitive task, and recovery observation. This design is intended to elicit differences in affective expression, speech variability, and psychomotor response under controlled conditions. The project uses behavioral biomarkers such as smile latency, brow tension, head posture, vocal pitch variability, pause duration, and speech energy compression \cite{ref2, ref4}. The pipeline can be summarized as follows:
+\begin{enumerate}[leftmargin=1.5em]
+    \item \textbf{Session initialization:} The system initializes a guided session and manages state transitions across phases.
+    \item \textbf{Feature extraction:} Visual features (action units, head pose, eye openness, smile dynamics) \cite{ref4} and acoustic features (pitch, pause ratio, jitter, shimmer, energy flatness) \cite{ref2} are computed.
+    \item \textbf{Temporal aggregation:} A rolling analysis window integrates behavioral evidence over time and compares it against a neutral baseline.
+    \item \textbf{Multimodal fusion:} The system combines learned or rule-based visual and acoustic risk factors into a composite symptom score.
+    \item \textbf{Outcome generation:} The final output includes severity estimation, symptom domains, confidence levels, and clinically interpretable item summaries.
+\end{enumerate}
+This approach is consistent with the goal of making symptom assessment more interpretable and behaviorally grounded.
+
+\section{System Architecture}
+The architecture of FacialPulse follows a modular client-server design that separates user interaction, analysis, and longitudinal reporting.
+
+\subsection{Frontend Layer}
+The frontend is implemented using Next.js and React. It provides:
+\begin{itemize}[leftmargin=1.5em]
+    \item live camera and microphone access,
+    \item protocol-guided user screens,
+    \item summary dashboards for risk and severity,
+    \item history and reporting interfaces,
+    \item support for structured clinical-like screening sessions.
+\end{itemize}
+This layer requests image and audio data from the user while exposing a workflow for guided elicitation and result presentation.
+
+\subsection{Backend Layer}
+The backend is built around a FastAPI service and includes modules for:
+\begin{itemize}[leftmargin=1.5em]
+    \item temporal baseline calibration,
+    \item facial signal extraction,
+    \item acoustic analysis,
+    \item multimodal fusion,
+    \item severity scoring,
+    \item longitudinal record management.
+\end{itemize}
+The backend receives captured samples, processes them in analysis pipelines, and emits structured screening reports.
+
+\subsection{Analysis Modules}
+The project includes several specialized components:
+
+\subsubsection{Temporal and Baseline Analysis}
+The temporal module computes behavioral change over small time windows and normalizes features relative to a resting-state baseline. This is essential for identifying deviations in expression, social reactivity, or psychomotor response.
+
+\subsubsection{Facial Analysis}
+Facial processing focuses on action units, landmark geometry, gaze direction, and smile dynamics \cite{ref4}. These descriptors are used to infer positive affect (e.g., smile intensity), constricted affect (e.g., flattened expression), and tension-related indicators such as brow lowering.
+
+\subsubsection{Acoustic Analysis}
+The audio signal is processed to estimate pitch mean, pitch variability, pauses, speech-to-pause ratio, jitter, shimmer, and energy flatness \cite{ref2}. These metrics are interpreted as indicators of prosodic monotony and psychomotor slowing.
+
+\subsubsection{Multimodal Fusion}
+The multimodal engine combines visual and acoustic evidence while accounting for both concordance and divergence across modalities \cite{ref5}. In low-data conditions, the system can degrade gracefully to a visual-only output.
+
+\subsubsection{Scoring Engine}
+The scoring module generates a PHQ-8-inspired estimate, severity tier, confidence bounds, item-level symptom decomposition, and explainable contributor rankings. The repository explicitly states that the model is benchmark-aligned and trained against synthetic distributions; therefore, the implementation should be interpreted as a prototype and research framework rather than clinically validated prediction software.
+
+\subsubsection{Longitudinal Privacy Layer}
+
+The longitudinal module stores de-identified session records under a pseudonymous subject identifier, computes session-to-session variation, and supports export and purge operations. The design reflects a privacy-first orientation, aligning with HIPAA-like and GDPR-inspired concerns.
+\section{Methodological Workflow}
+The screening methodology implemented in FacialPulse follows a structured sequence:
+\begin{enumerate}[leftmargin=1.5em]
+\item \textbf{Neutral calibration:} The subject is recorded in a resting state to estimate baseline expressiveness and head pose.
+\item \textbf{Positive-affect phase:} Smile response and facial reactivity are captured.
+\item \textbf{Cognitive phase:} Reading-induced tension, gaze behaviors, and brow activity are compared against baseline.
+\item \textbf{Recovery phase:} The system measures whether facial expression recovers or remains persistently constrained.
+\item \textbf{Acoustic assessment:} Speech is analyzed for pitch, pauses, and vocal perturbation.
+\item \textbf{Fusion and scoring:} Features are combined into a composite behavioral score.
+\item \textbf{Longitudinal tracking:} Multi-session change is computed using anonymized records.
+\end{enumerate}
+This workflow is designed to make the assessment interpretable to clinicians and researchers while retaining a layered engineering structure.
+\section{Evaluation Considerations and Validation Scope}
+The repository includes an end-to-end pipeline test suite that validates module functionality, including temporal calibration, protocol state transitions, audio analysis, fusion logic, scoring outputs, and privacy-based record management. These tests demonstrate software correctness for synthetic examples and controlled conditions. However, they do not constitute a clinical validation study.
+The project is best understood as a research prototype rather than a medically certified system. The scoring model is benchmark-informed and generated from synthetic benchmark distributions, not a validated predictive model trained and evaluated on a representative clinical cohort. In addition, the project does not present external validation against established depression datasets, nor does it provide formal measures of sensitivity, specificity, or adverse event risk.
+\section{Limitations and Ethical Considerations}
+FacialPulse introduces a compelling framework, but several limitations must be acknowledged:
+\begin{itemize}[leftmargin=1.5em]
+\item \textbf{Clinical validation gap:} Behavioral markers have not been validated against real patient populations under formal clinical constraints \cite{ref3}.
+\item \textbf{Data bias risk:} Face and voice features may vary across age, culture, language, disability, medication status, and recording conditions.
+\item \textbf{Model interpretability vs. causal inference:} The scoring architecture is interpretable, but it does not establish causal relationships between behavioral features and depression diagnosis.
+\item \textbf{Privacy safeguards:} De-identification and purge functions are useful, but they must be evaluated in the context of the actual deployment environment and regulatory obligations.
+\end{itemize}
+These limitations are particularly important when considering health-related applications. The prototype should be positioned as a screening research aid rather than as a stand-alone diagnostic instrument.
+\section{Conclusion}
+This paper has presented FacialPulse as a multimodal affective screening framework designed to analyze facial dynamics and vocal prosody in a structured clinical-like interaction. The system addresses a critical research problem: the need for objective, interpretable, behavior-based tools that can complement traditional depression screening methods. By combining temporal calibration, phased elicitation, multimodal fusion, and long-term subject tracking, the platform offers a proof-of-concept architecture for exploratory mental health screening.
+The project’s primary contribution lies in its integrated software design and its use of domain-informed behavioral features. However, clinical usefulness requires further empirical validation using real-world patient cohorts, external benchmarking, fairness assessment, and robust privacy review. With these steps, systems such as FacialPulse could support early screening and longitudinal monitoring in mental health care while maintaining interpretability and responsible data governance.
+\balance
+\begin{thebibliography}{99}
+\bibitem{ref1} T. J. B. de Moura \emph{et al.}, Affective computing for mental health assessment,'' \emph{IEEE Transactions on Affective Computing}, 2023. \bibitem{ref2} M. M. Loewenstein \emph{et al.}, Speech prosody and depression: A review of automated measurement approaches,'' \emph{Journal of Affective Disorders}, 2021.
+\bibitem{ref3} R. D. B. \emph{et al.}, Computer vision biomarkers in psychiatry: Challenges and opportunities,'' \emph{Proceedings of the IEEE}, 2022. \bibitem{ref4} P. J. M. C. de la Torre, Facial action units in behavioral assessment,'' \emph{ACM Transactions on Computing for Healthcare}, 2024.
+\bibitem{ref5} S. K. D. and A. C. M., ``Multimodal depression screening: Challenges and opportunities,'' \emph{IEEE Access}, 2024.
+\end{thebibliography}
+\end{document}

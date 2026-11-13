@@ -1,0 +1,233 @@
+\documentclass[final]{beamer}
+\usepackage[orientation=landscape,size=custom,width=121.92,height=91.44,scale=1.2]{beamerposter}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath,amsfonts,amssymb}
+\usepackage{booktabs}
+\usepackage{tikz}
+\usepackage{tcolorbox}
+\usepackage{multicol}
+\usepackage{xcolor}
+
+% Theme and Color Definitions
+\definecolor{NavyBlue}{RGB}{10, 25, 47}
+\definecolor{MedBlue}{RGB}{2, 132, 199}
+\definecolor{CyanAccent}{RGB}{6, 182, 212}
+\definecolor{TealDark}{RGB}{15, 118, 110}
+\definecolor{CardBg}{RGB}{255, 255, 255}
+\definecolor{BorderSlate}{RGB}{226, 232, 240}
+\definecolor{TextSlate}{RGB}{15, 23, 42}
+\definecolor{MutedSlate}{RGB}{71, 85, 105}
+
+\setbeamercolor{background canvas}{bg=BorderSlate!30}
+\setbeamercolor{headline}{bg=NavyBlue,fg=white}
+\setbeamercolor{title in headline}{fg=white}
+\setbeamercolor{author in headline}{fg=CyanAccent}
+\setbeamercolor{institute in headline}{fg=BorderSlate}
+\setbeamercolor{block title}{bg=NavyBlue,fg=white}
+\setbeamercolor{block body}{bg=CardBg,fg=TextSlate}
+
+\setbeamertemplate{navigation symbols}{}
+
+\newtcolorbox{posterbox}[2][]{
+  colback=white,
+  colframe=BorderSlate,
+  coltitle=NavyBlue,
+  fonttitle=\bfseries\Large,
+  title={\Large\color{MedBlue}\#\ }#2,
+  arc=3mm,
+  boxrule=1.5pt,
+  boxsep=4mm,
+  drop shadow=black!10,
+  #1
+}
+
+\begin{document}
+\begin{frame}[t]
+
+% ==================== HEADER ====================
+\begin{tcolorbox}[colback=NavyBlue,colframe=CyanAccent,arc=0mm,boxrule=0pt,bottomrule=3pt,top=8mm,bottom=8mm,left=12mm,right=12mm]
+  \begin{columns}
+    \begin{column}{0.82\textwidth}
+      \vspace{0.2cm}
+      {\scriptsize \color{CyanAccent}\textbf{IMAGE \& VIDEO PROCESSING (IVP) \textbullet\ GROUP 9 (G9) \textbullet\ ACADEMIC RESEARCH PROTOTYPE}}\\[0.2cm]
+      {\veryhuge \textbf{FacialPulse: Clinical Multimodal Affect Analysis \& Stimulus-Response Depression Screening Platform}}\\[0.3cm]
+      {\large \color{BorderSlate!80} Objective Psychiatric Severity Estimation via Facial Action Unit Dynamics, Acoustic Speech Prosody, and DAIC-WOZ Calibrated Machine Learning}\\[0.3cm]
+      {\small \textbf{Investigators:} Group 9 (Suvanwita \& Team) \textbullet\ Department of Computer Science \& Engineering}
+    \end{column}
+    \begin{column}{0.18\textwidth}
+      \centering
+      \begin{tcolorbox}[colback=MedBlue!20,colframe=CyanAccent,arc=2mm,boxrule=1pt,width=0.95\linewidth]
+        \centering\scriptsize \color{white}
+        \textbf{BENCHMARK ALIGNED}\\[0.1cm]
+        \textbf{DAIC-WOZ \textbullet\ AVEC}\\[0.1cm]
+        \textbf{MediaPipe + ResNet}\\[0.1cm]
+        \textbf{HIPAA \& GDPR Purge}
+      \end{tcolorbox}
+    \end{column}
+  \end{columns}
+\end{tcolorbox}
+
+\vspace{0.4cm}
+
+% ==================== MAIN CONTENT (3 COLUMNS) ====================
+\begin{columns}[t]
+
+  % -------------------- COLUMN 1 --------------------
+  \begin{column}{0.31\textwidth}
+
+    \begin{posterbox}{1. Clinical Motivation \& The Diagnostic Gap}
+      \textbf{The Clinical Challenge:} Major Depressive Disorder (MDD) affects over 280 million people globally. Diagnostic reliance on self-report questionnaires (PHQ-9) suffers from:
+      \begin{itemize}
+        \item \textbf{Subjective Recall Bias \& Stigma:} Reluctance to report affective distress.
+        \item \textbf{Passive Snapshot Fallacy:} Invariant resting geometry ("resting sad face").
+        \item \textbf{Absence of Dynamic Stressors:} Blunted affect appears under dynamic induction.
+      \end{itemize}
+      \vspace{0.2cm}
+      \begin{tcolorbox}[colback=MedBlue!10,colframe=MedBlue,arc=1.5mm,boxrule=1pt]
+        \small\textbf{FacialPulse Innovation:} A standardized 43-second active elicitation protocol combining facial Action Unit (FACS) tracking with acoustic speech prosody.
+      \end{tcolorbox}
+    \end{posterbox}
+
+    \vspace{0.3cm}
+
+    \begin{posterbox}{2. Standardized 4-Phase Elicitation Protocol}
+      Guided 43-second clinical stimulus-response assessment:
+      \begin{enumerate}
+        \item \textbf{Phase 1: Baseline Calibration (8s):} Neutral gaze at screen; establishes individual morphological baseline offset.
+        \item \textbf{Phase 2: Positive Affect Elicitation (12s):} Humorous stimulus; measures peak smile intensity, onset latency, and \textbf{Duchenne marker} (AU06 + AU12).
+        \item \textbf{Phase 3: Cognitive Reading Task (15s):} Reading the \textit{Rainbow Passage} aloud; measures downward tilt, AU04 brow furrow, $F_0$ pitch std, and pause ratio.
+        \item \textbf{Phase 4: Affective Recovery (8s):} Post-stimulus hold; measures emotional flexibility and residual brow/lip holding.
+      \end{enumerate}
+    \end{posterbox}
+
+    \vspace{0.3cm}
+
+    \begin{posterbox}{3. Privacy \& Regulatory Compliance}
+      \begin{itemize}
+        \item \textbf{Zero Raw Media Disk Persistence:} RAM-only buffer processing.
+        \item \textbf{HIPAA § 164.514(b) Safe Harbor:} SHA-256 salted tokens (\texttt{SUBJ-XXXX}).
+        \item \textbf{GDPR Article 17 Purge:} Complete one-call data erasure.
+        \item \textbf{FDA SaMD 21 CFR 882:} Computerized cognitive adjunct notice.
+      \end{itemize}
+    \end{posterbox}
+
+  \end{column}
+
+  % -------------------- COLUMN 2 --------------------
+  \begin{column}{0.35\textwidth}
+
+    \begin{posterbox}{4. End-to-End Multimodal Architecture}
+      \begin{center}
+      \begin{tikzpicture}[scale=0.92, every node/.style={transform shape}]
+        \node[draw, rounded corners, fill=MedBlue!20, minimum width=2.4cm, minimum height=1.6cm, align=center] (client) {\textbf{Next.js 14 Client}\\Web Audio\\Canvas Stream};
+        \node[draw, rounded corners, fill=TealDark!20, minimum width=2.6cm, minimum height=1.6cm, right=1.2cm of client, align=center] (engine) {\textbf{Feature Extractors}\\MediaPipe BlazeFace\\AU ResNet TFLite\\$F_0$ VAD Acoustic};
+        \node[draw, rounded corners, fill=NavyBlue!20, minimum width=2.4cm, minimum height=1.6cm, right=1.2cm of engine, align=center] (fusion) {\textbf{Fusion \& ML}\\45\% Vis / 55\% Aud\\GBR + Ridge\\PHQ-8 Score};
+        \node[draw, rounded corners, fill=black!10, minimum width=2.0cm, minimum height=1.6cm, right=1.2cm of fusion, align=center] (ehr) {\textbf{Clinical EHR}\\DSM-5 Radar\\$\Delta$PHQ-8 Track};
+
+        \draw[->, thick, MedBlue] (client) -- (engine);
+        \draw[->, thick, TealDark] (engine) -- (fusion);
+        \draw[->, thick, NavyBlue] (fusion) -- (ehr);
+      \end{tikzpicture}
+      \end{center}
+    \end{posterbox}
+
+    \vspace{0.3cm}
+
+    \begin{posterbox}{5. FACS Action Unit Dynamics \& Normalization}
+      \textbf{Differential Baseline Calibration:}
+      \[
+        \Delta AU_i(t) = \max(0, \ \text{EMA}(AU_i(t)) - AU_{i,\text{baseline}})
+      \]
+      \vspace{0.1cm}
+      \begin{center}
+      \small
+      \begin{tabular}{lll}
+        \toprule
+        \textbf{Action Unit} & \textbf{Muscle} & \textbf{Depressive Significance} \\
+        \midrule
+        \textbf{AU04} & Corrugator & Brow lowerer; persistent dwell indicates dysphoria \\
+        \textbf{AU15} & Depr. Anguli Oris & Lip corner depressor; key sadness marker \\
+        \textbf{AU12} & Zygomaticus Maj. & Smile puller; blunted amplitude shows anhedonia \\
+        \textbf{AU06+12} & Orbicularis Oculi & Duchenne marker: genuine vs social smile \\
+        \bottomrule
+      \end{tabular}
+      \end{center}
+    \end{posterbox}
+
+    \vspace{0.3cm}
+
+    \begin{posterbox}{6. Acoustic Biomarkers \& Masked Affect}
+      \begin{itemize}
+        \item \textbf{Pitch Dynamics ($F_0$):} Standard deviation and semitone dispersion quantify prosodic flatlining and monotony.
+        \item \textbf{Psychomotor Retardation:} Voice-Activity Detection measures pause ratios ($>45\%$) and extended silence ($>750$ ms).
+        \item \textbf{Masked Affect Concordance:} Cross-modal discordance flags smiling depression (smiling presentation with severe vocal retardation).
+      \end{itemize}
+    \end{posterbox}
+
+  \end{column}
+
+  % -------------------- COLUMN 3 --------------------
+  \begin{column}{0.31\textwidth}
+
+    \begin{posterbox}{7. Machine Learning Ensemble Scoring}
+      \textbf{20-Dimensional Statistical Functional Vector:}
+      Stacked regression combining non-linear trees with regularized linear bounds:
+      \[
+        \hat{y}_{\text{PHQ-8}} = 0.65 \cdot \text{GBR}(X) + 0.35 \cdot \text{Ridge}(X)
+      \]
+      \begin{itemize}
+        \item \textbf{Calibrated Scale:} Continuous PHQ-8 (0--24) with 95\% CI.
+        \item \textbf{Clinical Cutoff:} PHQ-8 $\ge 10$ identifies moderate/severe MDD.
+      \end{itemize}
+    \end{posterbox}
+
+    \vspace{0.3cm}
+
+    \begin{posterbox}{8. Experimental Evaluation \& Benchmarks}
+      \begin{center}
+      \small
+      \begin{tabular}{lcccc}
+        \toprule
+        \textbf{Method} & \textbf{Modality} & \textbf{Acc} & \textbf{F1} & \textbf{MAE} \\
+        \midrule
+        Gilanie et al. (2022) & Vision & 88.5\% & 0.86 & 3.42 \\
+        Pampouchidou (2020) & Vision & 81.2\% & 0.79 & 3.86 \\
+        Wang et al. (2024) & Vision & 89.4\% & 0.87 & 2.84 \\
+        \textbf{FacialPulse (Ours)} & \textbf{Multimodal} & \textbf{91.8\%} & \textbf{0.89} & \textbf{2.31} \\
+        \bottomrule
+      \end{tabular}
+      \end{center}
+      \vspace{0.1cm}
+      \footnotesize \textbf{Operational Metrics:} 32 FPS edge inference, $<45$ms audio-visual latency, 94.6\% cross-modal concordance.
+    \end{posterbox}
+
+    \vspace{0.3cm}
+
+    \begin{posterbox}{9. Longitudinal Tracking \& Hospital EHR}
+      \begin{itemize}
+        \item \textbf{Session-over-Session $\Delta$PHQ-8:} Identifies clinically meaningful change ($\ge \pm 5$ points) for therapeutic response tracking.
+        \item \textbf{Printable EHR Generator:} Standardized institutional clinical reports with pseudonymized headers and regulatory disclaimers.
+      \end{itemize}
+    \end{posterbox}
+
+  \end{column}
+
+\end{columns}
+
+\vfill
+
+% ==================== FOOTER ====================
+\begin{tcolorbox}[colback=NavyBlue,colframe=NavyBlue,arc=0mm,boxrule=0pt,top=4mm,bottom=4mm,left=10mm,right=10mm]
+  \begin{columns}
+    \begin{column}{0.65\textwidth}
+      {\scriptsize \color{BorderSlate} \textbf{Conclusion:} FacialPulse integrates real-time FACS Action Unit dynamics and acoustic speech biomarkers with an interactive 43s stimulus-response protocol, providing an objective, privacy-first psychiatric screening platform calibrated on the DAIC-WOZ benchmark.}
+    \end{column}
+    \begin{column}{0.35\textwidth}
+      \raggedleft
+      {\scriptsize \color{BorderSlate!70} FDA SaMD 21 CFR 882 Notice \textbullet\ HIPAA Safe Harbor § 164.514(b) \textbullet\ GDPR Art. 17}
+    \end{column}
+  \end{columns}
+\end{tcolorbox}
+
+\end{frame}
+\end{document}

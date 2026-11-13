@@ -1,0 +1,51 @@
+session_id,input_band,has_audio,phq8_score,severity_tier,clinical_threshold_met,ci95_lower,ci95_upper,in_expected_band,output_valid,top_contributors
+T01,0-4,false,3,Minimal / None,False,0.0,6.9,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; speech_pause_ratio; f0_std_hz
+T02,0-4,false,3,Minimal / None,False,0.0,6.9,True,True,monotone_index; avg_pause_duration_ms; speech_pause_ratio; affect_flatness_index; f0_std_hz
+T03,0-4,false,3,Minimal / None,False,0.0,6.7,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; speech_pause_ratio; f0_std_hz
+T04,0-4,false,3,Minimal / None,False,0.0,6.7,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; speech_pause_ratio; f0_std_hz
+T05,0-4,false,3,Minimal / None,False,0.0,6.9,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; speech_pause_ratio; f0_std_hz
+T06,0-4,false,4,Minimal / None,False,0.4,7.3,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; speech_pause_ratio; f0_std_hz
+T07,0-4,false,4,Minimal / None,False,0.2,7.1,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; speech_pause_ratio; f0_std_hz
+T08,0-4,false,4,Minimal / None,False,0.1,7.0,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; speech_pause_ratio; f0_std_hz
+T09,0-4,false,3,Minimal / None,False,0.0,6.9,True,True,monotone_index; avg_pause_duration_ms; speech_pause_ratio; f0_std_hz; duchenne_pct
+T10,0-4,false,4,Minimal / None,False,0.1,7.1,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; speech_pause_ratio; f0_std_hz
+T11,0-4,false,4,Minimal / None,False,0.2,7.1,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; speech_pause_ratio; f0_std_hz
+T12,0-4,false,3,Minimal / None,False,0.0,6.7,True,True,monotone_index; avg_pause_duration_ms; speech_pause_ratio; affect_flatness_index; duchenne_pct
+T13,0-4,false,3,Minimal / None,False,0.0,6.9,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; speech_pause_ratio; f0_std_hz
+T14,0-4,false,3,Minimal / None,False,0.0,6.7,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; speech_pause_ratio; f0_std_hz
+T15,5-9,false,6,Mild,False,2.7,9.6,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; speech_pause_ratio; head_down_pct
+T16,5-9,false,7,Mild,False,3.1,10.0,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; speech_pause_ratio; head_down_pct
+T17,5-9,false,6,Mild,False,2.6,9.6,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; speech_pause_ratio; f0_std_hz
+T18,5-9,false,6,Mild,False,2.8,9.7,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; speech_pause_ratio; f0_std_hz
+T19,5-9,false,7,Mild,False,3.1,10.1,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; speech_pause_ratio; head_down_pct
+T20,5-9,false,6,Mild,False,2.6,9.5,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; speech_pause_ratio; f0_std_hz
+T21,5-9,false,6,Mild,False,3.0,9.9,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; speech_pause_ratio; duchenne_pct
+T22,5-9,false,5,Mild,False,1.1,8.0,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; speech_pause_ratio; duchenne_pct
+T23,5-9,false,5,Mild,False,1.1,8.0,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; speech_pause_ratio; head_down_pct
+T24,5-9,false,6,Mild,False,2.7,9.6,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; speech_pause_ratio; f0_std_hz
+T25,5-9,false,5,Mild,False,1.1,8.0,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; speech_pause_ratio; f0_std_hz
+T26,5-9,false,4,Minimal / None,False,0.9,7.8,False,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; speech_pause_ratio; f0_std_hz
+T27,10-14,true,12,Moderate,True,9.5,14.0,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; speech_pause_ratio; vocal_strain_index
+T28,10-14,true,12,Moderate,True,9.8,14.2,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; speech_pause_ratio; vocal_strain_index
+T29,10-14,true,12,Moderate,True,10.2,14.6,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; speech_pause_ratio; energy_flatness_index
+T30,10-14,true,12,Moderate,True,9.6,14.0,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; speech_pause_ratio; vocal_strain_index
+T31,10-14,true,15,Moderately Severe,True,13.0,17.4,False,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; speech_pause_ratio; vocal_strain_index
+T32,10-14,true,12,Moderate,True,9.7,14.1,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; speech_pause_ratio; vocal_strain_index
+T33,10-14,true,12,Moderate,True,9.6,14.0,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; vocal_strain_index; speech_pause_ratio
+T34,10-14,true,12,Moderate,True,10.1,14.5,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; speech_pause_ratio; vocal_strain_index
+T35,10-14,true,9,Mild,False,6.8,11.2,False,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; speech_pause_ratio; vocal_strain_index
+T36,10-14,true,12,Moderate,True,10.1,14.5,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; speech_pause_ratio; vocal_strain_index
+T37,10-14,true,12,Moderate,True,10.1,14.5,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; vocal_strain_index; speech_pause_ratio
+T38,10-14,true,15,Moderately Severe,True,12.6,17.0,False,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; speech_pause_ratio; head_down_pct
+T39,15-24,true,19,Moderately Severe,True,16.8,21.3,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; speech_pause_ratio; vocal_strain_index
+T40,15-24,true,18,Moderately Severe,True,16.0,20.4,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; speech_pause_ratio; vocal_strain_index
+T41,15-24,true,18,Moderately Severe,True,15.3,19.8,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; vocal_strain_index; speech_pause_ratio
+T42,15-24,true,19,Moderately Severe,True,16.6,21.0,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; speech_pause_ratio; vocal_strain_index
+T43,15-24,true,19,Moderately Severe,True,16.3,20.7,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; speech_pause_ratio; vocal_strain_index
+T44,15-24,true,19,Moderately Severe,True,17.0,21.4,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; vocal_strain_index; speech_pause_ratio
+T45,15-24,true,18,Moderately Severe,True,15.3,19.8,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; speech_pause_ratio; vocal_strain_index
+T46,15-24,true,18,Moderately Severe,True,15.4,19.8,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; vocal_strain_index; speech_pause_ratio
+T47,15-24,true,17,Moderately Severe,True,15.2,19.7,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; vocal_strain_index; speech_pause_ratio
+T48,15-24,true,17,Moderately Severe,True,15.2,19.6,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; vocal_strain_index; speech_pause_ratio
+T49,15-24,true,19,Moderately Severe,True,17.2,21.7,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; speech_pause_ratio; vocal_strain_index
+T50,15-24,true,19,Moderately Severe,True,17.1,21.6,True,True,monotone_index; avg_pause_duration_ms; affect_flatness_index; vocal_strain_index; speech_pause_ratio

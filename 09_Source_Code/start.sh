@@ -61,16 +61,20 @@ if [ ! -d "venv" ]; then
 fi
 
 source venv/bin/activate
-pip install -r requirements.txt -q
+python3 -m pip install -r requirements.txt -q
 
 if check_port 8000; then
     echo -e "${YELLOW}Port 8000 already in use (PID: $(get_port_pid 8000)) - using running instance${NC}"
 else
     echo "Starting FastAPI server on port 8000..."
-    uvicorn main:app --host 0.0.0.0 --port 8000 &
+    python3 -m uvicorn main:app --host 0.0.0.0 --port 8000 &
     BACKEND_PID=$!
-    sleep 2
-    echo -e "${GREEN}Backend started (PID: $BACKEND_PID)${NC}"
+    sleep 3
+    if kill -0 "$BACKEND_PID" 2>/dev/null; then
+        echo -e "${GREEN}Backend started (PID: $BACKEND_PID)${NC}"
+    else
+        echo -e "${RED}Backend failed to start. Check logs above.${NC}"
+    fi
 fi
 
 # Start Frontend
@@ -88,8 +92,12 @@ else
     echo "Starting Next.js server on port 3000..."
     npm run dev &
     FRONTEND_PID=$!
-    sleep 3
-    echo -e "${GREEN}Frontend started (PID: $FRONTEND_PID)${NC}"
+    sleep 4
+    if kill -0 "$FRONTEND_PID" 2>/dev/null; then
+        echo -e "${GREEN}Frontend started (PID: $FRONTEND_PID)${NC}"
+    else
+        echo -e "${RED}Frontend failed to start. Check logs above.${NC}"
+    fi
 fi
 
 echo -e "\n${GREEN}========================================"

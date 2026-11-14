@@ -1,0 +1,7 @@
+Suvanwita Das (IIT2024013): Led the overall project architecture and system integration, coordinating the backend, frontend, and end-to-end workflow.
+Milan Chopda (IIT2024053): Worked on facial temporal analysis, including expression dynamics, baseline correction, and motion-based feature extraction.
+Anshkumar (IIT2023055): Focused on speech and acoustic feature analysis, including pitch, pauses, and rhythm-based biomarkers.
+Chandan Kumar Das (IIT2023070): Worked on multimodal fusion, combining facial and audio features into a unified representation.
+Prince Kumar (IIT2024085): Contributed to model scoring and prediction, converting extracted features into assessment outputs.
+Sayan Biswas (IIT2024090): Worked on the guided assessment protocol and the validation of the end-to-end evaluation pipeline.
+Panara Bhavya (IIT2024097): Contributed to longitudinal tracking, session history, and privacy-aware data management.
